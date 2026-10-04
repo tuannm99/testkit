@@ -1,0 +1,55 @@
+id: TC-CHAOS-002
+title: Mất kết nối Postgres 5s dưới tải — job không bị đẩy vào DLQ, không mất, phục hồi ≤ 30s
+requirement: REQ-281
+risk: P0
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Kết nối từ worker tới Postgres bị cắt hoàn toàn trong 5s (Toxiproxy: đóng kết nối hiện có, từ chối kết nối
+  mới) trong khi job tới đều 10/s. Một sự cố hạ tầng ngắn không được biến thành mất job (DLQ) hay xử lý sai.
+preconditions:
+  - 150 đơn pending; job qua Kafka 10/s
+  - Worker kết nối Postgres qua proxy Toxiproxy riêng của execution
+input:
+  orders: 150
+trigger: [kafka]
+chaos:
+  proxies: [postgres]
+  max_recovery: 30s
+given:
+  mock.payment: [201]
+steps:
+  - step: postgres.exec
+    with:
+      sql: >
+        INSERT INTO orders (id, customer_email, amount_cents, currency)
+        SELECT 'P' || g, 'c' || g || '+{{ .ns }}@shop.test', 100 + g, 'USD' FROM generate_series(1, {{ .input.orders }}) g
+  - step: load.start
+    with: { rate: 10, from: 1, to: "{{ .input.orders }}", id_prefix: P }
+  - step: wait.until
+    with: { check: postgres.order.count(status=paid), gte: 20, within: 30s }
+  - step: chaos.down
+    with: { proxy: postgres }
+  - step: chaos.hold
+    with:
+      for: 5s
+      abort_if:
+        - { check: kafka.topic(orders.dlq).count, gt: 0, why: "dừng ngay khi job đầu tiên bị đẩy vào DLQ" }
+  - step: chaos.clear
+  - step: chaos.recover
+    with:
+      within: 60s
+      expect:
+        - { check: kafka.lag(order-worker), lte: 5 }
+  - step: load.wait
+    with: { timeout: 60s }
+expect:
+  - { id: A1, check: postgres.order.count(status=paid), eq: 150, why: "Không mất đơn nào" }
+  - { id: A2, check: kafka.topic(orders.dlq).count, eq: 0, why: "Sự cố hạ tầng tạm thời không đẩy job vào DLQ" }
+  - { id: A3, check: mock.payment.succeeded, eq: 150, why: "Không trừ tiền trùng" }
+  - { id: A4, check: experiment.recovery_seconds, lte: 30, why: "Phục hồi trong thời gian cho phép" }
+  - { id: A5, check: experiment.aborted, eq: false, why: "Không chạm điều kiện dừng khẩn cấp" }
+evidence:
+  grafana: [throughput, consumer_lag, jobs_total]
+within: 120s

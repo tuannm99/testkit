@@ -1,0 +1,38 @@
+id: TC-PERF-002
+title: Webhook hoàn tiền 50 req/s (k6, open model) — p95, tỉ lệ lỗi, so với baseline
+requirement: REQ-291
+risk: P1
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Đo endpoint webhook của service dưới tải HTTP cố định 50 req/s (k6 constant-arrival-rate), sau 5s
+  warm-up ở 30 req/s. Mỗi request được ký HMAC đúng như nhà cung cấp thật.
+preconditions:
+  - 100 đơn đã paid (W1..W100) để nhận sự kiện hoàn tiền
+input:
+  orders: 100
+given:
+  mock.payment: [201]
+steps:
+  - step: postgres.exec
+    with:
+      sql: >
+        INSERT INTO orders (id, customer_email, amount_cents, currency, status, payment_ref)
+        SELECT 'W' || g, 'w' || g || '+{{ .ns }}@shop.test', 100, 'USD', 'paid', 'ch_w' || g FROM generate_series(1, {{ .input.orders }}) g
+perf:
+  kind: load
+  executor: k6
+  script: webhook.js
+  target: "{{ .sut.http }}"
+  env: { WEBHOOK_SECRET: "{{ .mocks.psp.secret }}", ORDERS: "{{ .input.orders }}" }
+  warmup: 5s
+  stages: [{ rate: 50, duration: 15s }]
+  repeat: 3
+  thresholds: { p95_ms: 250, error_rate: 0.01, max_dropped: 0 }
+  baseline: { key: webhook-refund-50rps, max_regression: 10% }
+expect:
+  - { id: A1, check: postgres.payment_event.count, gte: 2700, why: "Mọi sự kiện được ghi nhận: 3 lần × (150 warm-up + 750 đo) = 2700" }
+evidence:
+  grafana: [container_cpu, container_memory]
+within: 30s

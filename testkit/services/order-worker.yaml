@@ -141,6 +141,32 @@ env:
   ORDER_LEASE: 10s
   WEBHOOK_SECRET: '{{ mocksecret "psp" }}'
 
+# Trigger perf executor: how to create the business objects of a batch of job
+# ids and how to read when each one completed (end-to-end latency per job).
+perf:
+  fixture: >
+    INSERT INTO orders (id, customer_email, amount_cents, currency)
+    SELECT '{{ .prefix }}' || g, 'p' || g || '+{{ .ns }}@shop.test', 100 + g, 'USD' FROM generate_series({{ .from }}, {{ .to }}) g
+  completion: >
+    SELECT id, extract(epoch FROM updated_at) AS done FROM orders WHERE status = 'paid' AND id LIKE '{{ .prefix }}%'
+
+# Dependencies a case may route through Toxiproxy (chaos.proxies in the case).
+# {{ proxy }} is the toxiproxy:<port> allocated for the execution.
+chaos:
+  proxies:
+    postgres:
+      upstream: postgres:5432
+      env: { DATABASE_URL: "postgres://{{ pguser }}:{{ pgpass }}@{{ proxy }}/{{ database }}?sslmode=disable" }
+    payment:
+      upstream: mockhub:8081
+      env: { PAYMENT_URL: "http://{{ proxy }}/ns/{{ .NS }}/payment" }
+    redis:
+      upstream: redis:6379
+      env: { REDIS_ADDR: "{{ proxy }}" }
+    elasticsearch:
+      upstream: elasticsearch:9200
+      env: { ES_URL: "http://{{ proxy }}" }
+
 # Cross-store consistency checked by `reconcile.<name>.*` and written as evidence.
 reconcile:
   paid_orders:
