@@ -40,6 +40,7 @@ type Project struct {
 	ServicesDir  string                `yaml:"services_dir"`
 	ScenariosDir string                `yaml:"scenarios_dir"`
 	MocksDir     string                `yaml:"mocks_dir"`
+	BaselinesDir string                `yaml:"baselines_dir"`
 	OutDir       string                `yaml:"out_dir"`
 	Images       map[string]ImageBuild `yaml:"images"`
 

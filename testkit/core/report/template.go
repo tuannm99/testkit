@@ -74,6 +74,24 @@ details summary{cursor:pointer;color:var(--acc)}
 </table>
 {{end}}
 
+{{if .Run.Perf}}
+<h2>Hiệu năng</h2>
+<table><tr><th>Testcase</th><th>Loại</th><th>p50 / p95 / p99 (ms)</th><th>Thông lượng</th><th>Lỗi</th><th>Baseline</th><th>Kết quả</th></tr>
+{{range .Run.Perf}}<tr><td><a href="#{{anchor .ID}}">{{.ID}}</a></td><td>{{.Kind}} ({{.Executor}}, ×{{.Repeat}})</td>
+<td class="num">{{printf "%.0f" (index .Metrics "p50_ms")}} / {{printf "%.0f" (index .Metrics "p95_ms")}} / {{printf "%.0f" (index .Metrics "p99_ms")}}</td>
+<td class="num">{{printf "%.2f" (index .Metrics "throughput")}}/s</td><td class="num">{{printf "%.2f%%" (pct (index .Metrics "error_rate"))}}</td>
+<td>{{if .Comparisons}}{{range .Comparisons}}<span class="pill {{if .Regression}}bad{{else}}ok{{end}}" title="{{.Verdict}}">{{.Metric}} {{worse .ChangePct}}</span> {{end}}{{else}}<span class="muted">{{.Note}}</span>{{end}}</td>
+<td><span class="pill {{cls .Result}}">{{.Result}}</span></td></tr>{{end}}
+</table>
+{{end}}
+{{if .Run.Chaos}}
+<h2>Chaos</h2>
+<table><tr><th>Testcase</th><th>Lỗi gây ra</th><th>Dừng khẩn cấp</th><th>Phục hồi</th><th>Kết quả</th></tr>
+{{range .Run.Chaos}}<tr><td><a href="#{{anchor .ID}}">{{.ID}}</a></td><td class="ev">{{range .Faults}}{{.}}<br>{{end}}</td><td>{{if .Aborted}}có{{else}}không{{end}}</td>
+<td class="num">{{if ge .RecoveryS 0.0}}{{printf "%.1f" .RecoveryS}}s{{else}}—{{end}}{{if .MaxRecover}} / ≤ {{printf "%.0f" .MaxRecover}}s{{end}}</td><td><span class="pill {{cls .Result}}">{{.Result}}</span></td></tr>{{end}}
+</table>
+{{end}}
+
 <h2>Ma trận truy vết (yêu cầu → testcase → kết quả)</h2>
 <table><tr><th>Yêu cầu</th><th>Testcase</th></tr>
 {{range .Matrix}}<tr><td>{{.Req}}</td><td>{{range .Execs}}<a href="#{{anchor .ID}}">{{.ID}}</a> <span class="pill {{cls .Result}}">{{.Result}}</span><br>{{end}}</td></tr>{{end}}
@@ -119,6 +137,27 @@ details summary{cursor:pointer;color:var(--acc)}
 <td><span class="pill {{cls .Result}}">{{.Result}}</span>{{if .Message}}<div class="ev">{{.Message}}</div>{{end}}</td>
 <td>{{.Why}}</td><td class="ev">{{range .Evidence}}<a href="{{.}}">{{base .}}</a><br>{{end}}</td></tr>{{end}}
 </table>
+
+{{with .Perf}}{{$p := .}}
+<h4>4b. Hiệu năng ({{.Kind}}, executor {{.Executor}}, {{.Repeat}} lần đo)</h4>
+<table><tr><th>Chỉ số</th><th>Median</th><th>Từng lần đo</th><th>SLO</th></tr>
+{{range $k, $v := .Metrics}}<tr><td>{{$k}}</td><td class="num">{{num $v}}</td><td class="ev">{{range index $p.Samples $k}}{{num .}} {{end}}</td><td>{{sloFor $p.Thresholds $k}}</td></tr>{{end}}
+</table>
+{{if .Comparisons}}<p>So với baseline <code>{{.BaselineKey}}</code> của môi trường <code>{{.BaselineEnv}}</code> (ghi lúc {{.BaselineAt}}), kiểm định Mann-Whitney U một phía, α = 0.05:</p>
+<table><tr><th>Chỉ số</th><th>Baseline (median, mẫu)</th><th>Lần này (median, mẫu)</th><th>Mức thay đổi</th><th>p</th><th>Kết luận</th></tr>
+{{range .Comparisons}}<tr><td>{{.Metric}}</td><td class="num">{{num .BaseMedian}}<div class="ev">{{range .Baseline}}{{num .}} {{end}}</div></td>
+<td class="num">{{num .CurMedian}}<div class="ev">{{range .Current}}{{num .}} {{end}}</div></td><td class="num">{{worse .ChangePct}}</td><td class="num">{{printf "%.3f" .PValue}}</td>
+<td><span class="pill {{if .Regression}}bad{{else}}ok{{end}}">{{if .Regression}}regression{{else}}không regression{{end}}</span> <span class="ev">{{.Verdict}}</span></td></tr>{{end}}
+</table>{{end}}
+{{if .Note}}<p class="muted">{{.Note}}</p>{{end}}
+<p class="muted">Tải theo open model (tốc độ đến cố định), warm-up không tính vào phép đo; "late" = số job máy tạo tải phát trễ (máy tạo tải bị nghẽn). Số liệu thô: <a href="{{.Dir}}/summary.json">summary.json</a>.</p>
+{{end}}
+{{with .Chaos}}
+<h4>4c. Thí nghiệm chaos</h4>
+<div class="kv"><div>Lỗi gây ra</div><div>{{range .Faults}}<code>{{.}}</code><br>{{end}}</div>
+<div>Dừng khẩn cấp</div><div>{{if .Aborted}}<span class="pill bad">có</span> {{.AbortWhy}}{{else}}không{{end}}</div>
+<div>Phục hồi</div><div>{{if ge .RecoveryS 0.0}}{{printf "%.1f" .RecoveryS}}s{{else}}không đo được / chưa phục hồi{{end}}{{if .MaxRecover}} (cho phép ≤ {{printf "%.0f" .MaxRecover}}s){{end}}</div></div>
+{{end}}
 
 <h4>5. Đầu ra (response, snapshot DB, mail, journal mock, log)</h4>
 {{if .Outputs}}<table><tr><th>Bằng chứng</th><th>Tệp</th></tr>

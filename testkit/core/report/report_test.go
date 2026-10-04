@@ -72,3 +72,28 @@ func TestHTMLEscapesAndContainsSections(t *testing.T) {
 		t.Error("title not escaped")
 	}
 }
+
+func TestHTMLPerfAndChaosSections(t *testing.T) {
+	r := sampleRun()
+	p := &result.PerfResult{ID: "TC-A-1[kafka]", Kind: "load", Executor: "trigger", Result: result.Pass, Repeat: 3,
+		Metrics:     map[string]float64{"p50_ms": 80, "p95_ms": 273, "p99_ms": 400, "throughput": 19.97, "error_rate": 0.001},
+		Samples:     map[string][]float64{"p95_ms": {250, 273, 300}},
+		Thresholds:  map[string]float64{"p95_ms": 500},
+		BaselineKey: "order-pipeline-20rps", BaselineEnv: "4cpu-16g",
+		Comparisons: []result.PerfComparison{{Metric: "p95_ms", BaseMedian: 6.7, CurMedian: 273, ChangePct: 3997, PValue: 0.018, Regression: true,
+			Verdict: "chậm hơn có ý nghĩa", Baseline: []float64{6, 6.7, 7}, Current: []float64{250, 273, 300}}}}
+	c := &result.ChaosResult{ID: "TC-B-2", Faults: []string{"postgres down 5s"}, Result: result.Pass, RecoveryS: 3.2, MaxRecover: 30}
+	r.Executions[0].Perf, r.Executions[1].Chaos = p, c
+	r.Perf, r.Chaos = []*result.PerfResult{p}, []*result.ChaosResult{c}
+	var b bytes.Buffer
+	if err := HTML(&b, &evidence.Dir{Root: t.TempDir()}, r, &evidence.Manifest{}); err != nil {
+		t.Fatal(err)
+	}
+	h := b.String()
+	for _, want := range []string{"4b. Hiệu năng", "250 273 300", "≤ 500", "Mann-Whitney", "3997.0%", "regression",
+		"4c. Thí nghiệm chaos", "postgres down 5s", "3.2s", "<h2>Hiệu năng</h2>", "<h2>Chaos</h2>", "0.10%"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("report misses %q", want)
+		}
+	}
+}

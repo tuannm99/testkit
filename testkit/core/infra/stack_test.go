@@ -32,8 +32,18 @@ func TestResolveOnlyWhatServicesDeclare(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(sel.Services, ",")
-	if got != "elasticsearch,kafka,mailpit,mockhub,postgres" {
+	if got != "clickhouse,elasticsearch,kafka,mailpit,mockhub,mongo,postgres,redis" {
 		t.Fatalf("selection = %s", got)
+	}
+	// A service declaring only Postgres + an HTTP mock must not start the other stores or Mailpit.
+	small := &config.Service{Name: "small", Stores: config.Stores{Postgres: &config.PostgresStore{}},
+		Mocks: map[string]config.MockSpec{"p": {Kind: "http"}}}
+	sel, err = st.Resolve(UpOptions{Profiles: []string{"core", "stores", "mocks"}, Services: []*config.Service{small}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(sel.Services, ","); got != "mockhub,postgres" {
+		t.Fatalf("small selection = %s", got)
 	}
 	all, _ := st.Resolve(UpOptions{Profiles: []string{"stores"}})
 	if len(all.Services) != 6 {

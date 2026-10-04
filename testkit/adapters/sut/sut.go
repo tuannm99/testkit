@@ -64,6 +64,9 @@ func Funcs(env *kit.Env) template.FuncMap {
 		"redis":     func() string { return in.Redis },
 		"otlp":      func() string { return in.OTLP },
 		"database":  ns.Database,
+		"pguser":    func() string { return in.Postgres.User },
+		"pgpass":    func() string { return in.Postgres.Password },
+		"proxy":     func() (string, error) { return "", fmt.Errorf("{{ proxy }} is only available in chaos.proxies env") },
 		"mocksecret": func(name string) (string, error) {
 			m, ok := env.Service.Mocks[name]
 			if !ok {
@@ -91,6 +94,27 @@ func RenderEnv(env *kit.Env) (map[string]string, error) {
 			return nil, fmt.Errorf("env %s: %w", k, err)
 		}
 		out[k] = b.String()
+	}
+	// Dependencies routed through Toxiproxy for this execution.
+	for _, name := range env.Proxies {
+		ps, ok := env.Service.Chaos.Proxies[name]
+		addr, allocated := env.ProxyAddr[name]
+		if !ok || !allocated {
+			return nil, fmt.Errorf("proxy %q not declared by the service or not allocated", name)
+		}
+		funcs := Funcs(env)
+		funcs["proxy"] = func() string { return addr }
+		for k, v := range ps.Env {
+			t, err := template.New(k).Option("missingkey=error").Funcs(funcs).Parse(v)
+			if err != nil {
+				return nil, fmt.Errorf("chaos.proxies.%s.env.%s: %w", name, k, err)
+			}
+			var b strings.Builder
+			if err := t.Execute(&b, data); err != nil {
+				return nil, fmt.Errorf("chaos.proxies.%s.env.%s: %w", name, k, err)
+			}
+			out[k] = b.String()
+		}
 	}
 	for k, v := range env.ExtraEnv {
 		out[k] = v

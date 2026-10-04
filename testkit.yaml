@@ -10,6 +10,7 @@ services_dir: testkit/services
 scenarios_dir: testkit/scenarios
 mocks_dir: testkit/mocks             # OpenAPI/specs served to the Mock Hub
 out_dir: out
+baselines_dir: testkit/baselines   # performance baselines, one directory per environment fingerprint
 images:                              # images TestKit builds itself (pinned by TESTKIT_VERSION)
   mockhub:
     context: testkit
@@ -27,3 +28,7 @@ images:                              # images TestKit builds itself (pinned by T
     context: testkit
     dockerfile: testkit/Dockerfile
     target: tkstats
+  toxiproxy:
+    context: testkit
+    dockerfile: testkit/Dockerfile
+    target: toxiproxy

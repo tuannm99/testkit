@@ -43,8 +43,10 @@ func (e exitErr) Error() string { return e.msg }
 func (e exitErr) ExitCode() int { return e.code }
 
 type globals struct {
-	root    string
-	verbose bool
+	root           string
+	verbose        bool
+	recordBaseline bool
+	baselineRuns   int
 }
 
 func newRoot() *cobra.Command {
@@ -59,6 +61,6 @@ func newRoot() *cobra.Command {
 	cmd.PersistentFlags().BoolVarP(&g.verbose, "verbose", "v", false, "print every docker command")
 	cmd.AddCommand(newDoctorCmd(g), newUpCmd(g), newDownCmd(g), newStatusCmd(g),
 		newAnnotateCmd(g), newCollectCmd(g),
-		newLintCmd(g), newPlanCmd(g), newStepsCmd(g), newRunCmd(g), newReportCmd(g), newVerifyCmd(g))
+		newLintCmd(g), newPlanCmd(g), newStepsCmd(g), newRunCmd(g), newReportCmd(g), newVerifyCmd(g), newBaselineCmd(g))
 	return cmd
 }

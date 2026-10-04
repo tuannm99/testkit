@@ -124,6 +124,23 @@ func Lint(c *Case, services map[string]*config.Service, reg *kit.Registry) []Iss
 			errf(line("mutations"), "mutation %s: failpoint %q is not declared by service %s", m.ID, m.Failpoint, svc.Name)
 		}
 	}
+	routed := map[string]bool{}
+	for _, px := range c.Chaos.Proxies {
+		routed[px] = true
+		if _, ok := svc.Chaos.Proxies[px]; !ok {
+			errf(line("chaos"), "chaos.proxies: %q is not declared in chaos.proxies of service %s", px, svc.Name)
+		}
+	}
+	if c.Chaos.MaxRecovery != "" {
+		if _, err := time.ParseDuration(c.Chaos.MaxRecovery); err != nil {
+			errf(line("chaos"), "chaos.max_recovery: %v", err)
+		}
+	}
+	if c.Perf != nil {
+		for _, e := range c.Perf.Validate() {
+			errf(line("perf"), "%s", e)
+		}
+	}
 	for _, p := range c.Evidence.Grafana {
 		if _, ok := svc.Panels[p]; !ok {
 			errf(line("evidence"), "evidence.grafana: panel %q is not declared by service %s (declared: %s)", p, svc.Name,
@@ -151,7 +168,10 @@ func Lint(c *Case, services map[string]*config.Service, reg *kit.Registry) []Iss
 		if def.Connector != "" && !serviceHas(svc, def.Connector) {
 			errf(s.Line, "step %s needs connector %s, not declared by service %s", s.Step, def.Connector, svc.Name)
 		}
-		if s.Step == "trigger.enqueue" && len(c.Trigger) == 0 {
+		if strings.HasPrefix(s.Step, "chaos.") && kit.Str(s.With, "proxy") != "" && !routed[kit.Str(s.With, "proxy")] {
+			errf(s.Line, "step %s targets proxy %q, not routed for this case (add it to chaos.proxies)", s.Step, kit.Str(s.With, "proxy"))
+		}
+		if (s.Step == "trigger.enqueue" || s.Step == "load.start") && len(c.Trigger) == 0 {
 			errf(s.Line, "trigger.enqueue (given.job) needs `trigger:` (kafka, db-poll)")
 		}
 		if s.Step == "mock.script" {

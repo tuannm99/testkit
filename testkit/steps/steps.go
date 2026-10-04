@@ -5,6 +5,8 @@
 package steps
 
 import (
+	"github.com/tuannm99/testkit/testkit/adapters/chaos/toxiproxy"
+	"github.com/tuannm99/testkit/testkit/adapters/exec/k6"
 	httpmock "github.com/tuannm99/testkit/testkit/adapters/mock/http"
 	"github.com/tuannm99/testkit/testkit/adapters/mock/mail"
 	"github.com/tuannm99/testkit/testkit/adapters/mock/socket"
@@ -55,6 +57,25 @@ var Defs = []kit.StepDef{
 	{Name: "mail.script", Connector: "mail", Doc: "SMTP behaviour per session: ok | 451@data | 550@rcpt | disconnect@data | slow(2s)", Required: []string{"behaviours"}},
 	{Name: "socket.configure", Connector: "socket", Doc: "Reconfigure a socket partner: auto_ack, pong, faults [{after_messages, action: close|reset|half_open|drop_acks}], script", Required: []string{"mock"}, Optional: []string{"auto_ack", "pong", "faults", "script", "framing"}},
 
+	// load generation (open model) and chaos experiments
+	{Name: "load.start", Doc: "Background open-model load: enqueue jobs id_prefix+from..to at a fixed rate (jobs/s) through the trigger", Required: []string{"rate", "from", "to"}, Optional: []string{"id_prefix"}},
+	{Name: "load.stop", Doc: "Stop the background load now"},
+	{Name: "load.wait", Doc: "Wait until the background load has issued every job", Optional: []string{"timeout"}},
+	{Name: "chaos.hold", Doc: "Keep the injected faults for a duration; if an abort_if condition holds, remove every fault at once and fail (blast radius)", Required: []string{"for"}, Optional: []string{"abort_if"}},
+	{Name: "chaos.recover", Doc: "After removing the fault: poll the steady state until it holds, record the recovery time (experiment.recovery_seconds)", Required: []string{"expect"}, Optional: []string{"within"}},
+	{Name: "chaos.latency", Connector: "chaos", Doc: "Toxiproxy: add latency (ms, jitter) on a proxied dependency", Required: []string{"proxy", "latency"}, Optional: []string{"jitter", "stream", "toxicity"}},
+	{Name: "chaos.timeout", Connector: "chaos", Doc: "Toxiproxy: stop all data; close after timeout ms (0 = hang forever)", Required: []string{"proxy"}, Optional: []string{"timeout", "stream", "toxicity"}},
+	{Name: "chaos.reset_peer", Connector: "chaos", Doc: "Toxiproxy: reset connections (TCP RST) after timeout ms", Required: []string{"proxy"}, Optional: []string{"timeout", "stream", "toxicity"}},
+	{Name: "chaos.bandwidth", Connector: "chaos", Doc: "Toxiproxy: limit bandwidth (KB/s)", Required: []string{"proxy", "rate"}, Optional: []string{"stream", "toxicity"}},
+	{Name: "chaos.slicer", Connector: "chaos", Doc: "Toxiproxy: slice data into small delayed packets", Required: []string{"proxy"}, Optional: []string{"size", "delay", "stream", "toxicity"}},
+	{Name: "chaos.down", Connector: "chaos", Doc: "Toxiproxy: cut the dependency (connections closed, new ones refused)", Required: []string{"proxy"}},
+	{Name: "chaos.up", Connector: "chaos", Doc: "Toxiproxy: restore the dependency", Required: []string{"proxy"}},
+	{Name: "chaos.clear", Connector: "chaos", Doc: "Remove every fault of the execution (toxics, disabled proxies, netem)"},
+	{Name: "chaos.container", Connector: "chaos", Doc: "Docker: pause|unpause|stop|start|restart|kill the service (target: sut) or an infrastructure container (runs alone: shared)", Required: []string{"action"}, Optional: []string{"target", "replica", "timeout"}},
+	{Name: "chaos.network", Connector: "chaos", Doc: "Docker: disconnect|connect the service from the network (dependencies and DNS unreachable)", Required: []string{"action"}, Optional: []string{"replica"}},
+	{Name: "chaos.stress", Connector: "chaos", Doc: "Resource pressure inside the service: cpu (workers) | memory (mb) | disk (mb) for a duration", Optional: []string{"resource", "workers", "mb", "duration", "replica"}},
+	{Name: "chaos.netem", Connector: "chaos", Doc: "tc netem on the service network interface: delay, jitter, loss (%)", Optional: []string{"delay", "jitter", "loss", "replica"}, Requires: []string{"NET_ADMIN", "netem"}},
+
 	{Name: "sut.restart", Connector: "sut", Doc: "Restart the service under test and wait until healthy", Optional: []string{"replica", "timeout"}},
 	{Name: "sut.stop", Connector: "sut", Doc: "Graceful stop (SIGTERM, then SIGKILL after timeout)", Optional: []string{"replica", "timeout"}},
 	{Name: "sut.kill", Connector: "sut", Doc: "Send a signal (default KILL) — crash without cleanup", Optional: []string{"replica", "signal"}},
@@ -86,6 +107,8 @@ var Checks = []kit.CheckDef{
 		Examples: []string{"socket.partner.distinct(type=order.paid)", "socket.partner.duplicates", "socket.partner.connections"}},
 	{Prefix: "reconcile", Connector: "reconcile", Doc: "Same id set across stores (counts, duplicates, missing, sha256)",
 		Examples: []string{"reconcile.paid_orders.mismatches", "reconcile.paid_orders.count(store=elasticsearch)"}},
+	{Prefix: "experiment", Connector: "", Doc: "Chaos experiment and load generator state",
+		Examples: []string{"experiment.recovery_seconds", "experiment.aborted", "experiment.load.sent", "experiment.load.late"}},
 	{Prefix: "sut", Connector: "sut", Doc: "Service under test containers",
 		Examples: []string{"sut.restarts", "sut.running", "sut.log(order paid).count", "sut.metric(worker_poll_empty_total)"}},
 }
@@ -103,6 +126,8 @@ func Register(reg *kit.Registry) {
 	reg.AddConnector("mongo", mongo.New)
 	reg.AddConnector("socket", socket.NewConnector)
 	reg.AddConnector("reconcile", reconcile.New)
+	reg.AddConnector("chaos", toxiproxy.New)
+	reg.AddConnector("k6", k6.New)
 	reg.AddConnector("trigger:kafka", kafka.NewTrigger)
 	reg.AddConnector("trigger:db-poll", dbpoll.New)
 	for _, d := range Defs {

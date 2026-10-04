@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"math"
+	"strconv"
 	"html/template"
 	"io"
 	"os"
@@ -400,6 +402,45 @@ var funcs = template.FuncMap{
 		return c
 	},
 	"base":   filepath.Base,
+	"pct":    func(v float64) float64 { return v * 100 },
+	"num":    fmtNum,
+	"worse": func(v float64) string {
+		switch {
+		case v > 0:
+			return fmt.Sprintf("tệ đi %.1f%%", v)
+		case v < 0:
+			return fmt.Sprintf("tốt lên %.1f%%", -v)
+		}
+		return "không đổi"
+	},
+	"sloFor": func(t map[string]float64, metric string) string {
+		names := map[string]string{"p50_ms": "p50_ms", "p95_ms": "p95_ms", "p99_ms": "p99_ms", "error_rate": "error_rate", "throughput": "min_throughput", "late": "max_dropped"}
+		k, ok := names[metric]
+		if !ok {
+			return ""
+		}
+		v, ok := t[k]
+		if !ok {
+			return ""
+		}
+		if metric == "throughput" {
+			return fmt.Sprintf("≥ %g", v)
+		}
+		return fmt.Sprintf("≤ %g", v)
+	},
 	"anchor": anchor,
 	"isLast": func(i, n int) bool { return i == n-1 },
+}
+
+// fmtNum prints a metric without exponent notation: integers as is, large
+// values rounded to units, small ones with up to 3 decimals.
+func fmtNum(v float64) string {
+	a := math.Abs(v)
+	switch {
+	case v == math.Trunc(v) || a >= 100:
+		return strconv.FormatFloat(v, 'f', 0, 64)
+	case a >= 1:
+		return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(v, 'f', 2, 64), "0"), ".")
+	}
+	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(v, 'f', 4, 64), "0"), ".")
 }

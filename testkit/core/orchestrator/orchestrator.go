@@ -6,6 +6,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 	"github.com/tuannm99/testkit/testkit/core/config"
 	"github.com/tuannm99/testkit/testkit/core/evidence"
 	"github.com/tuannm99/testkit/testkit/core/kit"
+	"github.com/tuannm99/testkit/testkit/core/perf"
 	"github.com/tuannm99/testkit/testkit/core/result"
 	"github.com/tuannm99/testkit/testkit/core/scenario"
 )
@@ -56,6 +58,13 @@ type Runner struct {
 	Obs      Observability
 	Out      io.Writer
 	Caps     map[string]bool // capability name -> available
+
+	// Performance baselines (nil: no baseline comparison).
+	Baselines      *perf.Store
+	Fingerprint    perf.Fingerprint
+	RecordBaseline bool // testkit baseline record: store instead of compare
+	BaselineRuns   int  // override the number of repetitions
+	Commit         string
 
 	mu  sync.Mutex
 	seq int
@@ -103,28 +112,44 @@ func (r *Runner) Run(ctx context.Context, cases []*scenario.Case, opt Options) (
 	}
 
 	results := make([]*result.Execution, len(jobs))
+	// Cases that break shared infrastructure (e.g. pause Postgres) run alone,
+	// after the parallel batch, so they cannot disturb other executions.
+	var shared, exclusive []int
+	for i, j := range jobs {
+		if Exclusive(j.c) {
+			exclusive = append(exclusive, i)
+		} else {
+			shared = append(shared, i)
+		}
+	}
+	runOne := func(i int) {
+		j := jobs[i]
+		ex := r.execute(ctx, dir, opt, j.c, j.trigger, j.mutation, 1)
+		for attempt := 2; attempt <= opt.Retries+1 && j.mutation == nil &&
+			ex.Result != result.Pass && ex.Class == result.ClassProduct && ctx.Err() == nil; attempt++ {
+			retry := r.execute(ctx, dir, opt, j.c, j.trigger, nil, attempt)
+			if retry.Result == result.Pass {
+				ex.Class = result.ClassFlaky
+				ex.Reason = fmt.Sprintf("failed on attempt 1, passed on attempt %d (%s): quarantine and fix", attempt, retry.Dir)
+				break
+			}
+		}
+		results[i] = ex
+	}
 	sem := make(chan struct{}, opt.Parallel)
 	var wg sync.WaitGroup
-	for i, j := range jobs {
+	for _, i := range shared {
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(i int, j job) {
+		go func(i int) {
 			defer func() { <-sem; wg.Done() }()
-			ex := r.execute(ctx, dir, opt, j.c, j.trigger, j.mutation, 1)
-			for attempt := 2; attempt <= opt.Retries+1 && j.mutation == nil &&
-				ex.Result != result.Pass && ex.Class == result.ClassProduct && ctx.Err() == nil; attempt++ {
-				retry := r.execute(ctx, dir, opt, j.c, j.trigger, nil, attempt)
-				if retry.Result == result.Pass {
-					// Passed on retry with no change: flaky. It does not count as a pass.
-					ex.Class = result.ClassFlaky
-					ex.Reason = fmt.Sprintf("failed on attempt 1, passed on attempt %d (%s): quarantine and fix", attempt, retry.Dir)
-					break
-				}
-			}
-			results[i] = ex
-		}(i, j)
+			runOne(i)
+		}(i)
 	}
 	wg.Wait()
+	for _, i := range exclusive {
+		runOne(i)
+	}
 
 	// Attach mutation outcomes to the execution they challenge.
 	byKey := map[string]*result.Execution{}
@@ -159,6 +184,15 @@ func (r *Runner) Run(ctx context.Context, cases []*scenario.Case, opt Options) (
 	}
 	run.Executions = results
 	run.Parity = parity(results)
+	for _, ex := range results {
+		if ex.Chaos != nil && ex.Mutation == "" {
+			run.Chaos = append(run.Chaos, ex.Chaos)
+		}
+		if ex.Perf != nil && ex.Mutation == "" {
+			ex.Perf.Result = ex.Result
+			run.Perf = append(run.Perf, ex.Perf)
+		}
+	}
 	run.FinishedAt = time.Now().UTC()
 	return run, dir, nil
 }
@@ -252,6 +286,9 @@ type execution struct {
 	obsVars  map[string]string
 	keep     bool
 	caseCtx  context.Context
+	x        *experiment
+	caseFile string
+	data     map[string]any
 }
 
 func (e *execution) event(ev result.Event) {
@@ -302,7 +339,7 @@ func (r *Runner) execute(ctx context.Context, dir *evidence.Dir, opt Options, c 
 	r.logf("▶ %s  ns=%s", id, ns)
 
 	e := &execution{r: r, ex: ex, dir: dir, byName: map[string]kit.Connector{}, checkers: map[string]kit.Checker{},
-		keep: opt.Keep, caseCtx: ctx}
+		keep: opt.Keep, caseCtx: ctx, caseFile: c.File}
 	defer func() {
 		ex.FinishedAt = time.Now().UTC()
 		ex.Timeline = e.timeline
@@ -328,6 +365,13 @@ func (r *Runner) execute(ctx context.Context, dir *evidence.Dir, opt Options, c 
 		sutData[name] = fmt.Sprintf("http://%s:%d", ns.Container(svc.Name, 0, replicas), port)
 	}
 	data["sut"] = sutData
+	// Test-only secrets of the mocks (e.g. to sign webhooks in a load script).
+	mocks := map[string]any{}
+	for name, m := range svc.Mocks {
+		mocks[name] = map[string]any{"secret": m.Secret}
+	}
+	data["mocks"] = mocks
+	e.data = data
 	ex.Input = data["input"]
 	ex.Vars, _ = data["vars"].(map[string]any)
 	specs, err := c.Expand()
@@ -377,9 +421,11 @@ func (r *Runner) execute(ctx context.Context, dir *evidence.Dir, opt Options, c 
 		}
 	}
 	e.obsVars = map[string]string{"run_id": opt.RunID, "ns": string(ns)}
+	e.env.Proxies = c.Chaos.Proxies
+	e.checkers["experiment"] = experimentChecker{e: e}
 
 	// --- provision ----------------------------------------------------------------------
-	names := r.connectorNames(svc, trigger)
+	names := r.connectorNames(svc, trigger, c.Perf != nil && c.Perf.Executor == "k6")
 	for _, n := range names {
 		f, ok := r.Registry.Connectors[n]
 		if !ok {
@@ -422,6 +468,13 @@ func (r *Runner) execute(ctx context.Context, dir *evidence.Dir, opt Options, c 
 	// --- steps ------------------------------------------------------------------------------
 	within := c.WithinDuration()
 	stepsOK := e.runSteps(ctx, steps, within)
+	if e.x != nil && e.x.loadDone != nil {
+		e.stopLoad(false, 0)
+	}
+	var perfOuts []assert.Outcome
+	if stepsOK && c.Perf != nil {
+		perfOuts = e.runPerf(ctx, c)
+	}
 
 	// --- assertions: eventually, drain, final ------------------------------------------------
 	if stepsOK {
@@ -450,7 +503,7 @@ func (r *Runner) execute(ctx context.Context, dir *evidence.Dir, opt Options, c 
 			final[i] = o
 		}
 		e.event(result.Event{At: f0, End: time.Now().UTC(), Kind: "assert", Name: "final (after drain)", Status: summary(final)})
-		ex.Assertions = final
+		ex.Assertions = append(final, perfOuts...)
 		e.annotate(t0, time.Now().UTC(), "assert", "assertions: "+summary(final))
 	}
 	caseEnd := time.Now().UTC()
@@ -489,8 +542,39 @@ func (r *Runner) execute(ctx context.Context, dir *evidence.Dir, opt Options, c 
 		ex.LogTail = e.logTail(60)
 	}
 	ex.Conclusion = conclusion(ex)
+	ex.Chaos = e.chaosResult(c)
 	e.teardown()
 	return ex
+}
+
+// chaosResult summarises a chaos experiment (nil when the case injected no fault).
+func (e *execution) chaosResult(c *scenario.Case) *result.ChaosResult {
+	var faults []string
+	for _, s := range e.ex.Steps {
+		if strings.HasPrefix(s.Name, "chaos.") && s.Name != "chaos.hold" && s.Name != "chaos.recover" && s.Name != "chaos.clear" {
+			faults = append(faults, fmt.Sprintf("%s %s", s.Name, compactJSON(s.With)))
+		}
+	}
+	if len(faults) == 0 {
+		return nil
+	}
+	cr := &result.ChaosResult{ID: e.ex.ID, Title: e.ex.Title, Faults: faults, Result: e.ex.Result, Dir: e.ex.Dir,
+		RecoveryS: -1, Requirement: e.ex.Requirement}
+	if e.x != nil {
+		cr.Aborted, cr.AbortWhy = e.x.aborted, e.x.abortWhy
+		if e.x.recovered {
+			cr.SteadyOK, cr.RecoveryS = true, e.x.recovery.Seconds()
+		}
+	}
+	if d, err := time.ParseDuration(c.Chaos.MaxRecovery); err == nil {
+		cr.MaxRecover = d.Seconds()
+	}
+	return cr
+}
+
+func compactJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 // runSteps executes steps in order; it returns false on the first failure.
@@ -560,6 +644,16 @@ func (a *AssertError) Error() string {
 
 func (e *execution) applyStep(ctx context.Context, s kit.Step, within time.Duration) (kit.Result, error) {
 	switch s.Name {
+	case "load.start":
+		return e.startLoad(ctx, s)
+	case "load.stop":
+		return e.stopLoad(false, 0), nil
+	case "load.wait":
+		return e.stopLoad(true, kit.Dur(s.With, "timeout", 5*time.Minute)), nil
+	case "chaos.hold":
+		return e.hold(ctx, s)
+	case "chaos.recover":
+		return e.recoverStep(ctx, s, within)
 	case "trigger.enqueue":
 		if e.trigger == nil {
 			return kit.Result{}, &TestError{fmt.Errorf("trigger.enqueue: the case has no trigger")}
@@ -839,7 +933,7 @@ func (e *execution) logTail(n int) []string {
 
 // connectorNames lists the connectors of a service in provisioning order:
 // stores, mocks, the trigger, then the service under test.
-func (r *Runner) connectorNames(svc *config.Service, trigger string) []string {
+func (r *Runner) connectorNames(svc *config.Service, trigger string, perfK6 bool) []string {
 	names := append([]string{}, svc.Stores.Names()...)
 	kinds := map[string]bool{}
 	for _, m := range svc.Mocks {
@@ -857,13 +951,16 @@ func (r *Runner) connectorNames(svc *config.Service, trigger string) []string {
 	if len(svc.Reconcile) > 0 {
 		names = append(names, "reconcile")
 	}
+	if r.Registry.Connectors["chaos"] != nil {
+		names = append(names, "chaos") // before the service: proxies must exist when it starts
+	}
+	if perfK6 && r.Registry.Connectors["k6"] != nil {
+		names = append(names, "k6")
+	}
 	if trigger != "" {
 		names = append(names, "trigger:"+trigger)
 	}
 	names = append(names, "sut")
-	if r.Registry.Connectors["chaos"] != nil {
-		names = append(names, "chaos")
-	}
 	return names
 }
 
@@ -961,4 +1058,22 @@ func redact(m map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// Exclusive reports whether a case breaks shared infrastructure (an
+// infrastructure container rather than the service under test) and must
+// therefore run alone.
+func Exclusive(c *scenario.Case) bool {
+	steps, err := c.Expand()
+	if err != nil {
+		return false
+	}
+	for _, s := range steps {
+		if s.Step == "chaos.container" {
+			if t := kit.Str(s.With, "target"); t != "" && t != "sut" {
+				return true
+			}
+		}
+	}
+	return false
 }

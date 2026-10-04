@@ -44,7 +44,7 @@ func buildEnvArgs() []string {
 // builder/base images are pinned in versions.env too.
 func pinnedBuildArgs(p *config.Project) []string {
 	var args []string
-	for _, k := range []string{"GO_BUILD_IMAGE", "BASE_IMAGE", "DOCKER_CLI_IMAGE", "OTEL_COLLECTOR_IMAGE"} {
+	for _, k := range []string{"GO_BUILD_IMAGE", "BASE_IMAGE", "DOCKER_CLI_IMAGE", "OTEL_COLLECTOR_IMAGE", "TOXIPROXY_VERSION"} {
 		if v := p.Get(k); v != "" {
 			args = append(args, "--build-arg", k+"="+v)
 		}

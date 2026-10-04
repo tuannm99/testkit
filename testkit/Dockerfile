@@ -43,3 +43,19 @@ FROM ${BASE_IMAGE} AS tkstats
 COPY --from=build /out/tkstats /usr/local/bin/tkstats
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/tkstats"]
+
+# Toxiproxy built from source at a pinned version (no dependency on ghcr.io).
+FROM ${GO_BUILD_IMAGE} AS toxiproxy-build
+RUN --mount=type=secret,id=extra_ca,required=false \
+    if [ -s /run/secrets/extra_ca ]; then cat /run/secrets/extra_ca >> /etc/ssl/certs/ca-certificates.crt; fi
+ARG TOXIPROXY_VERSION=v2.9.0
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local
+RUN --mount=type=cache,target=/root/go/pkg/mod \
+    go install -ldflags="-s -w" github.com/Shopify/toxiproxy/v2/cmd/server@${TOXIPROXY_VERSION} && \
+    go install -ldflags="-s -w" github.com/Shopify/toxiproxy/v2/cmd/cli@${TOXIPROXY_VERSION}
+
+FROM ${BASE_IMAGE} AS toxiproxy
+COPY --from=toxiproxy-build /go/bin/server /toxiproxy
+COPY --from=toxiproxy-build /go/bin/cli /toxiproxy-cli
+EXPOSE 8474
+ENTRYPOINT ["/toxiproxy"]

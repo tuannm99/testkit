@@ -88,6 +88,8 @@ type Execution struct {
 	Conclusion    []Sentence       `json:"conclusion,omitempty"`
 	Mutations     []MutationResult `json:"mutations,omitempty"`
 	Attempt       int              `json:"attempt"`
+	Chaos         *ChaosResult     `json:"chaos,omitempty"`
+	Perf          *PerfResult      `json:"perf,omitempty"`
 	Mutation      string           `json:"mutation,omitempty"` // set when this execution is a mutation run
 }
 
@@ -171,30 +173,53 @@ type Quarantine struct {
 	Ticket   string `json:"ticket"`
 }
 
-// PerfResult is a performance test outcome (Phase 5).
+// PerfResult is a performance test outcome.
 type PerfResult struct {
-	ID       string             `json:"id"`
-	Title    string             `json:"title"`
-	Kind     string             `json:"kind"`
-	Result   string             `json:"result"`
-	Metrics  map[string]float64 `json:"metrics"`
-	Checks   []assert.Outcome   `json:"checks"`
-	Baseline map[string]float64 `json:"baseline,omitempty"`
-	Dir      string             `json:"dir"`
+	ID          string               `json:"id"`
+	Title       string               `json:"title"`
+	Kind        string               `json:"kind"`
+	Executor    string               `json:"executor"`
+	Result      string               `json:"result"`
+	Repeat      int                  `json:"repeat"`
+	Metrics     map[string]float64   `json:"metrics"` // medians over repetitions
+	Samples     map[string][]float64 `json:"samples"` // one value per repetition
+	Thresholds  map[string]float64   `json:"thresholds"`
+	BaselineKey string               `json:"baseline_key,omitempty"`
+	BaselineEnv string               `json:"baseline_environment,omitempty"`
+	BaselineAt  string               `json:"baseline_recorded_at,omitempty"`
+	Comparisons []PerfComparison     `json:"comparisons,omitempty"`
+	Note        string               `json:"note,omitempty"`
+	Dir         string               `json:"dir"`
+	Requirement []string             `json:"requirement"`
+}
+
+// PerfComparison mirrors perf.Comparison for the report.
+type PerfComparison struct {
+	Metric     string    `json:"metric"`
+	BaseMedian float64   `json:"baseline_median"`
+	CurMedian  float64   `json:"current_median"`
+	ChangePct  float64   `json:"change_pct"`
+	PValue     float64   `json:"p_value"`
+	Allowed    float64   `json:"allowed_pct"`
+	Regression bool      `json:"regression"`
+	Verdict    string    `json:"verdict"`
+	Baseline   []float64 `json:"baseline_samples"`
+	Current    []float64 `json:"current_samples"`
 }
 
 // ChaosResult is a chaos experiment outcome (Phase 5).
 type ChaosResult struct {
-	ID         string           `json:"id"`
-	Title      string           `json:"title"`
-	Fault      string           `json:"fault"`
-	Result     string           `json:"result"`
-	SteadyOK   bool             `json:"steady_state_ok"`
-	Aborted    bool             `json:"aborted"`
-	RecoveryS  float64          `json:"recovery_seconds"`
-	MaxRecover float64          `json:"max_recovery_seconds"`
-	Checks     []assert.Outcome `json:"checks"`
-	Dir        string           `json:"dir"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Faults      []string `json:"faults"`
+	Result      string   `json:"result"`
+	SteadyOK    bool     `json:"steady_state_ok"` // steady state regained after the fault
+	Aborted     bool     `json:"aborted"`
+	AbortWhy    string   `json:"abort_reason,omitempty"`
+	RecoveryS   float64  `json:"recovery_seconds"` // -1 when not measured / not recovered
+	MaxRecover  float64  `json:"max_recovery_seconds,omitempty"`
+	Dir         string   `json:"dir"`
+	Requirement []string `json:"requirement"`
 }
 
 // Counts returns executions by result.

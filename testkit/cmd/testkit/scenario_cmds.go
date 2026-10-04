@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/tuannm99/testkit/testkit/core/infra"
 	"github.com/tuannm99/testkit/testkit/core/kit"
 	"github.com/tuannm99/testkit/testkit/core/orchestrator"
+	"github.com/tuannm99/testkit/testkit/core/perf"
 	"github.com/tuannm99/testkit/testkit/core/report"
 	"github.com/tuannm99/testkit/testkit/core/result"
 	"github.com/tuannm99/testkit/testkit/core/scenario"
@@ -318,6 +320,11 @@ func newRunCmd(g *globals) *cobra.Command {
 					return err
 				}
 			}
+			for _, c := range cases {
+				if len(c.Chaos.Proxies) > 0 {
+					need = append(need, "toxiproxy")
+				}
+			}
 			if err := st.RequireHealthy(ctx, dedupeStrings(need)); err != nil {
 				return err
 			}
@@ -326,7 +333,7 @@ func newRunCmd(g *globals) *cobra.Command {
 				caps = st.Doctor(ctx).Capabilities
 			}
 			r := &orchestrator.Runner{Project: p, Registry: reg, Services: services, Out: out,
-				Caps: map[string]bool{"docker.sock": caps.DockerSock, "NET_ADMIN": caps.NetAdmin}}
+				Caps: map[string]bool{"docker.sock": caps.DockerSock, "NET_ADMIN": caps.NetAdmin, "netem": caps.Netem}}
 			if !noObs {
 				if run, _ := st.Running(ctx); strings.HasPrefix(run["grafana"], "Up") && strings.HasPrefix(run["prometheus"], "Up") {
 					obs := &grafana.Observer{C: collector(p)}
@@ -337,6 +344,8 @@ func newRunCmd(g *globals) *cobra.Command {
 					}
 				}
 			}
+			r.Baselines, r.Fingerprint, r.Commit = baselineStore(ctx, p, st)
+			r.RecordBaseline, r.BaselineRuns = g.recordBaseline, g.baselineRuns
 			opt.Command = os.Args
 			started := time.Now()
 			run, dir, err := r.Run(ctx, cases, opt)
@@ -515,4 +524,75 @@ func newVerifyCmd(g *globals) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// baselineStore returns the baseline store and the fingerprint of this environment.
+func baselineStore(ctx context.Context, p *config.Project, st *infra.Stack) (*perf.Store, perf.Fingerprint, string) {
+	dir := p.BaselinesDir
+	if dir == "" {
+		dir = "testkit/baselines"
+	}
+	fp := perf.Fingerprint{OS: runtime.GOOS + "/" + runtime.GOARCH, Images: map[string]string{}}
+	if out, err := st.D.Run(ctx, "info", "--format", "{{.NCPU}} {{.MemTotal}} {{.ServerVersion}}"); err == nil {
+		f := strings.Fields(out)
+		if len(f) == 3 {
+			fp.CPUs, _ = strconv.Atoi(f[0])
+			mem, _ := strconv.ParseInt(f[1], 10, 64)
+			fp.MemoryGiB = int((mem + 1<<29) >> 30)
+			fp.DockerVersion = f[2]
+		}
+	}
+	for k, v := range p.PinnedImages() {
+		switch k {
+		case "POSTGRES_IMAGE", "KAFKA_IMAGE", "ELASTICSEARCH_IMAGE", "CLICKHOUSE_IMAGE", "MONGO_IMAGE", "REDIS_IMAGE":
+			fp.Images[k] = v
+		}
+	}
+	return &perf.Store{Dir: p.Abs(dir)}, fp, gitOut(p.Root, "rev-parse", "HEAD")
+}
+
+func newBaselineCmd(g *globals) *cobra.Command {
+	cmd := &cobra.Command{Use: "baseline", Short: "Record and inspect performance baselines (per environment)"}
+	var runs int
+	record := &cobra.Command{
+		Use:   "record <perf-case.yaml>...",
+		Short: "Run perf cases N times and store the samples as the baseline of this environment",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			g.recordBaseline, g.baselineRuns = true, runs
+			run := newRunCmd(g)
+			run.SetArgs(args)
+			run.SetOut(cmd.OutOrStdout())
+			return run.ExecuteContext(cmd.Context())
+		},
+	}
+	record.Flags().IntVar(&runs, "runs", 5, "repetitions to measure (5-10 recommended)")
+	show := &cobra.Command{
+		Use:   "show",
+		Short: "List the baselines of this environment",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			p, st, err := g.stack(cmd.OutOrStdout())
+			if err != nil {
+				return err
+			}
+			store, fp, _ := baselineStore(cmd.Context(), p, st)
+			dir := filepath.Join(store.Dir, fp.ID())
+			files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
+			fmt.Fprintf(cmd.OutOrStdout(), "environment %s (%d CPU, %d GiB, docker %s): %d baseline(s) in %s\n", fp.ID(), fp.CPUs, fp.MemoryGiB, fp.DockerVersion, len(files), dir)
+			for _, f := range files {
+				key := strings.TrimSuffix(filepath.Base(f), ".json")
+				b, _, err := store.Load(fp, key)
+				if err != nil || b == nil {
+					continue
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "  %-28s recorded %s run %s (%s)\n", key, b.RecordedAt.Format(time.RFC3339), b.RunID, b.CaseID)
+				for _, m := range config.SortedKeys(b.Median) {
+					fmt.Fprintf(cmd.OutOrStdout(), "      %-12s median %-10.4g MAD %-8.3g samples %v\n", m, b.Median[m], b.MAD[m], b.Samples[m])
+				}
+			}
+			return nil
+		},
+	}
+	cmd.AddCommand(record, show)
+	return cmd
 }

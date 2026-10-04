@@ -171,7 +171,7 @@ services:
   # ----------------------------------------------------------------- chaos
   toxiproxy:
     profiles: [chaos]
-    image: ${TOXIPROXY_IMAGE}
+    image: testkit/toxiproxy:${TESTKIT_VERSION}
     labels: { <<: *managed, testkit.component: toxiproxy }
     command: ["-host=0.0.0.0", "-port=8474"]
     ports: ["127.0.0.1:${TK_PORT_TOXIPROXY}:8474"]

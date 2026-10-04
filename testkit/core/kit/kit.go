@@ -55,6 +55,10 @@ type Env struct {
 	Restart   string         // docker restart policy for the service under test
 	Replicas  int            // instances of the service under test (competing consumers)
 	ExtraEnv  map[string]string
+	// Proxies requested by the case (routed through Toxiproxy) and the
+	// address allocated for each one by the chaos connector.
+	Proxies   []string
+	ProxyAddr map[string]string
 }
 
 // Step is one scenario action routed to a connector.

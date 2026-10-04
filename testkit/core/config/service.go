@@ -49,6 +49,8 @@ type Service struct {
 	Panels      map[string]PanelSpec     `yaml:"panels"`
 	Requires    []string                 `yaml:"requires"` // special privileges (docker.sock, NET_ADMIN)
 	Reconcile   map[string]ReconcileSpec `yaml:"reconcile"`
+	Chaos       ChaosSpec                `yaml:"chaos"`
+	Perf        PerfServiceSpec          `yaml:"perf"`
 
 	File string `yaml:"-"` // absolute path of the descriptor
 	Dir  string `yaml:"-"`
@@ -185,6 +187,25 @@ type Entity struct {
 type EntityTable struct {
 	Table string `yaml:"table"` // table / index / collection (logical name)
 	Key   string `yaml:"key"`
+}
+
+// PerfServiceSpec tells the trigger perf executor how to prepare jobs and how
+// to know when each one completed (templates: .prefix .from .to .ns).
+type PerfServiceSpec struct {
+	Fixture    string `yaml:"fixture"`    // SQL creating the business objects of ids prefix+from..to
+	Completion string `yaml:"completion"` // SQL returning (id, completion epoch seconds) for prefix
+}
+
+// ChaosSpec declares the dependencies that can be routed through Toxiproxy.
+type ChaosSpec struct {
+	Proxies map[string]ProxySpec `yaml:"proxies"`
+}
+
+// ProxySpec: upstream address and the env of the service rewritten to go
+// through the proxy ({{ proxy }} = toxiproxy:<port allocated per execution>).
+type ProxySpec struct {
+	Upstream string            `yaml:"upstream"`
+	Env      map[string]string `yaml:"env"`
 }
 
 // ReconcileSpec compares the same set of ids across stores after a run

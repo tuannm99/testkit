@@ -36,7 +36,8 @@ type CheckResult struct {
 // that need a missing capability are skipped and reported, never failed.
 type Capabilities struct {
 	DockerSock bool `json:"docker_sock"` // containers may mount the docker socket
-	NetAdmin   bool `json:"net_admin"`   // containers may get CAP_NET_ADMIN (tc/netem)
+	NetAdmin   bool `json:"net_admin"`   // containers may get CAP_NET_ADMIN
+	Netem      bool `json:"netem"`       // the kernel supports tc netem (sch_netem)
 }
 
 // Has reports whether a capability name from a `requires:` list is present.
@@ -46,6 +47,8 @@ func (c Capabilities) Has(name string) bool {
 		return c.DockerSock
 	case "NET_ADMIN", "net_admin":
 		return c.NetAdmin
+	case "netem":
+		return c.Netem
 	}
 	return false
 }
@@ -139,6 +142,16 @@ func (s *Stack) Doctor(ctx context.Context) DoctorReport {
 		add(CheckResult{"cap NET_ADMIN", OK, "containers can get CAP_NET_ADMIN (tc/netem chaos)", ""})
 	} else {
 		add(CheckResult{"cap NET_ADMIN", Warn, "CAP_NET_ADMIN unavailable: netem-based chaos will be skipped (toxiproxy still works)", ""})
+	}
+	if img := s.P.Get("NETTOOLS_IMAGE"); rep.Capabilities.NetAdmin && img != "" {
+		if _, err := s.D.Run(ctx, "run", "--rm", "--label", LabelProject+"="+s.P.Name, "--cap-add", "NET_ADMIN",
+			img, "tc", "qdisc", "add", "dev", "eth0", "root", "netem", "delay", "1ms"); err == nil {
+			rep.Capabilities.Netem = true
+			add(CheckResult{"cap netem", OK, "kernel supports tc netem (network delay/loss chaos)", ""})
+		} else {
+			add(CheckResult{"cap netem", Warn, "tc netem unavailable (kernel module sch_netem missing): chaos.netem steps will be skipped",
+				"load sch_netem on the docker host (modprobe sch_netem) to enable them"})
+		}
 	}
 	return rep
 }

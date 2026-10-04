@@ -42,6 +42,8 @@ type Case struct {
 	Failpoints    []string       `yaml:"failpoints"` // enabled in the service under test (test image)
 	SUT           SUTSpec        `yaml:"sut"`
 	Mutations     []Mutation     `yaml:"mutations"`
+	Chaos         ChaosCase      `yaml:"chaos"`
+	Perf          *PerfSpec      `yaml:"perf"`
 	Tags          []string       `yaml:"tags"`
 	Generated     *Generated     `yaml:"generated"` // provenance when drafted by a tool/AI
 
@@ -158,6 +160,12 @@ type SUTSpec struct {
 	Restart  string            `yaml:"restart"`  // docker restart policy (on-failure:5 for crash tests)
 	Env      map[string]string `yaml:"env"`      // extra env (templated)
 	Replicas int               `yaml:"replicas"` // number of instances (competing consumers)
+}
+
+// ChaosCase lists the dependencies routed through Toxiproxy for this case.
+type ChaosCase struct {
+	Proxies     []string `yaml:"proxies"`
+	MaxRecovery string   `yaml:"max_recovery"` // recovery time allowed after the fault is removed (gate)
 }
 
 // Mutation is a deliberate break of the system the case must detect.
