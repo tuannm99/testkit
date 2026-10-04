@@ -25,6 +25,7 @@ type Config struct {
 	KafkaGroup       string
 	KafkaDLQTopic    string
 	KafkaMaxAttempts int
+	KafkaSession     time.Duration
 
 	PollInterval    time.Duration
 	PollMaxIdle     time.Duration
@@ -47,6 +48,8 @@ type Config struct {
 	OutboxInterval time.Duration
 
 	OrderLease time.Duration
+
+	WebhookSecret string
 }
 
 func Load() (Config, error) {
@@ -62,6 +65,7 @@ func Load() (Config, error) {
 		KafkaGroup:         get("KAFKA_GROUP", ""),
 		KafkaDLQTopic:      get("KAFKA_DLQ_TOPIC", ""),
 		KafkaMaxAttempts:   num("KAFKA_MAX_ATTEMPTS", 5, &errs),
+		KafkaSession:       dur("KAFKA_SESSION_TIMEOUT", 45*time.Second, &errs),
 		PollInterval:       dur("POLL_INTERVAL", 200*time.Millisecond, &errs),
 		PollMaxIdle:        dur("POLL_MAX_IDLE", 2*time.Second, &errs),
 		PollBatch:          num("POLL_BATCH", 10, &errs),
@@ -78,6 +82,7 @@ func Load() (Config, error) {
 		OutboxTopic:        get("OUTBOX_TOPIC", ""),
 		OutboxInterval:     dur("OUTBOX_INTERVAL", 200*time.Millisecond, &errs),
 		OrderLease:         dur("ORDER_LEASE", 30*time.Second, &errs),
+		WebhookSecret:      get("WEBHOOK_SECRET", ""),
 	}
 	host, _ := os.Hostname()
 	c.WorkerID = get("WORKER_ID", host)

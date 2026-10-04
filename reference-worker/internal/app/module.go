@@ -90,8 +90,8 @@ func newProcessor(c config.Config, r *pgrepo.Repo, p *payment.Client, s *search.
 		OrderLease: c.OrderLease, Metrics: m, Log: l, Exit: usecase.OSExit}
 }
 
-func runHTTP(lc fx.Lifecycle, c config.Config, pool *pgxpool.Pool, m *metrics.Metrics, l *slog.Logger) {
-	srv := httpserver.New(c.HTTPAddr, pool, m)
+func runHTTP(lc fx.Lifecycle, c config.Config, pool *pgxpool.Pool, repo *pgrepo.Repo, m *metrics.Metrics, l *slog.Logger) {
+	srv := httpserver.New(c.HTTPAddr, pool, m, &httpserver.WebhookHandler{Secret: c.WebhookSecret, Repo: repo, Log: l.With("component", "webhook")})
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
 			go func() {
@@ -128,7 +128,7 @@ func runTriggers(lc fx.Lifecycle, sd fx.Shutdowner, c config.Config, pool *pgxpo
 		OnStart: func(context.Context) error {
 			if c.Has("kafka") {
 				start("kafka", func(ctx context.Context) error {
-					cl, err := kafkatrigger.NewClient(c.KafkaBrokers, c.KafkaGroup, c.KafkaTopic, l)
+					cl, err := kafkatrigger.NewClient(c.KafkaBrokers, c.KafkaGroup, c.KafkaTopic, c.KafkaSession, l)
 					if err != nil {
 						return err
 					}

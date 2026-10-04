@@ -87,10 +87,14 @@ func (p *Poller) Run(ctx context.Context) error {
 			if free > 0 && err == nil {
 				p.Metrics.PollEmpty.Inc()
 			}
+			wait := idle
+			if failpoint.Enabled(failpoint.PollBusyLoop) {
+				wait = 0
+			}
 			select {
 			case <-ctx.Done():
 				return nil
-			case <-time.After(idle):
+			case <-time.After(wait):
 			}
 			idle = min(idle*2, p.MaxIdle)
 			continue

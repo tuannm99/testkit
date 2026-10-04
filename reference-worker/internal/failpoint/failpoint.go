@@ -20,4 +20,5 @@ const (
 	ESIgnoreBulkErrors  = "es_ignore_bulk_errors" // treat a 200 _bulk with item errors as success
 	CHNoDedupToken      = "ch_no_dedup_token"     // ClickHouse insert without deduplication token
 	UseWorkerClock      = "use_worker_clock"      // compare run_at with the worker clock
+	PollBusyLoop        = "poll_busy_loop"        // no idle backoff when the job table is empty
 )

@@ -33,8 +33,10 @@ type Consumer struct {
 }
 
 // NewClient builds a consumer-group client with manual commits.
-func NewClient(brokers []string, group, topic string, log *slog.Logger) (*kgo.Client, error) {
+func NewClient(brokers []string, group, topic string, session time.Duration, log *slog.Logger) (*kgo.Client, error) {
 	return kgo.NewClient(
+		kgo.SessionTimeout(session),
+		kgo.HeartbeatInterval(session/10),
 		kgo.SeedBrokers(brokers...),
 		kgo.ConsumerGroup(group),
 		kgo.ConsumeTopics(topic),

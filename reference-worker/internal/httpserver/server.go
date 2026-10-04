@@ -12,8 +12,11 @@ import (
 	"github.com/tuannm99/testkit/reference-worker/internal/metrics"
 )
 
-func New(addr string, pool *pgxpool.Pool, m *metrics.Metrics) *http.Server {
+func New(addr string, pool *pgxpool.Pool, m *metrics.Metrics, webhook http.Handler) *http.Server {
 	mux := http.NewServeMux()
+	if webhook != nil {
+		mux.Handle("/webhooks/payment", webhook)
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
