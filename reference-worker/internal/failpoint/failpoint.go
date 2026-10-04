@@ -21,4 +21,8 @@ const (
 	CHNoDedupToken      = "ch_no_dedup_token"     // ClickHouse insert without deduplication token
 	UseWorkerClock      = "use_worker_clock"      // compare run_at with the worker clock
 	PollBusyLoop        = "poll_busy_loop"        // no idle backoff when the job table is empty
+	MongoDupIsError     = "mongo_dup_is_error"    // treat E11000 (already recorded) as a failure
+	SkipCacheInvalidate = "skip_cache_invalidate" // keep the cached status when a refund arrives
+	WSNoResend          = "ws_no_resend"          // do not resend unacked notifications after reconnect
+	WSNoHeartbeat       = "ws_no_heartbeat"       // never detect a silent (half-open) connection
 )

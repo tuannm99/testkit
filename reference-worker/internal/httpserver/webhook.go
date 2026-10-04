@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/tuannm99/testkit/reference-worker/internal/adapter/pgrepo"
+	"github.com/tuannm99/testkit/reference-worker/internal/domain"
+	"github.com/tuannm99/testkit/reference-worker/internal/failpoint"
 )
 
 // WebhookHandler receives provider events: signature checked
@@ -22,6 +25,13 @@ type WebhookHandler struct {
 	Secret string
 	Repo   *pgrepo.Repo
 	Log    *slog.Logger
+	// Read models refreshed when a refund is applied.
+	Cache interface {
+		SetStatus(ctx context.Context, orderID, status string) error
+	}
+	Search interface {
+		IndexOrders(ctx context.Context, orders ...domain.Order) error
+	}
 }
 
 type event struct {
@@ -81,6 +91,28 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	default:
 		h.Log.Info("webhook processed", "event_id", ev.ID, "order_id", ev.Data.OrderID, "seq", ev.Seq, "applied", applied)
+		if applied {
+			if err := h.refreshReadModels(r.Context(), ev.Data.OrderID); err != nil {
+				// The refund is committed; read models are refreshed again by the next event.
+				h.Log.Error("refresh read models after refund", "order_id", ev.Data.OrderID, "err", err.Error())
+			}
+		}
 		w.WriteHeader(http.StatusOK)
 	}
+}
+
+func (h *WebhookHandler) refreshReadModels(ctx context.Context, orderID string) error {
+	o, err := h.Repo.Get(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if h.Cache != nil && !failpoint.Enabled(failpoint.SkipCacheInvalidate) {
+		if err := h.Cache.SetStatus(ctx, o.ID, string(o.Status)); err != nil {
+			return err
+		}
+	}
+	if h.Search != nil {
+		return h.Search.IndexOrders(ctx, o)
+	}
+	return nil
 }

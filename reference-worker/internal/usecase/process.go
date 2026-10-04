@@ -36,6 +36,22 @@ type (
 		Enabled() bool
 		SendPaid(ctx context.Context, o domain.Order) error
 	}
+	// Analytics writes an event row (idempotent by event id).
+	Analytics interface {
+		Event(ctx context.Context, eventID, typ string, o domain.Order) error
+	}
+	// Audit records an audit document (idempotent by event id).
+	Audit interface {
+		Record(ctx context.Context, eventID, typ string, o domain.Order) error
+	}
+	// Cache keeps the order status for read paths.
+	Cache interface {
+		SetStatus(ctx context.Context, orderID, status string) error
+	}
+	// Notifications queues a partner notification (idempotent by msg id).
+	Notifications interface {
+		Enqueue(ctx context.Context, msgID string, payload map[string]any) error
+	}
 )
 
 type Processor struct {
@@ -43,6 +59,10 @@ type Processor struct {
 	Payments   Payments
 	Search     Search
 	Mailer     Mailer
+	Analytics  Analytics
+	Audit      Audit
+	Cache      Cache
+	Notify     Notifications
 	WorkerID   string
 	OrderLease time.Duration
 	Metrics    *metrics.Metrics
@@ -120,9 +140,33 @@ func (p *Processor) Process(ctx context.Context, job domain.Job) (err error) {
 	if order.Status != domain.StatusPaid {
 		return fmt.Errorf("order %s in unexpected status %s", order.ID, order.Status)
 	}
-	// Side effects after the commit are idempotent and re-run on redelivery.
+	// Side effects after the commit are idempotent and re-run on redelivery:
+	// each one is keyed by the event id, so a retry after a later failure
+	// does not duplicate the earlier ones.
+	eventID := "order.paid:" + order.ID
+	if p.Analytics != nil {
+		if err := p.Analytics.Event(ctx, eventID, "order.paid", order); err != nil {
+			return err
+		}
+	}
+	if p.Audit != nil {
+		if err := p.Audit.Record(ctx, eventID, "order.paid", order); err != nil {
+			return err
+		}
+	}
+	if p.Cache != nil {
+		if err := p.Cache.SetStatus(ctx, order.ID, string(order.Status)); err != nil {
+			return err
+		}
+	}
 	if err := p.Search.IndexOrders(ctx, order); err != nil {
 		return err
+	}
+	if p.Notify != nil {
+		if err := p.Notify.Enqueue(ctx, eventID, map[string]any{"type": "order.paid", "order_id": order.ID,
+			"amount_cents": order.AmountCents, "currency": order.Currency}); err != nil {
+			return err
+		}
 	}
 	if p.Mailer != nil && p.Mailer.Enabled() {
 		send := true

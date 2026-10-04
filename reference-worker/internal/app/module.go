@@ -15,7 +15,13 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/tuannm99/testkit/reference-worker/internal/adapter/analytics"
+	"github.com/tuannm99/testkit/reference-worker/internal/adapter/audit"
+	"github.com/tuannm99/testkit/reference-worker/internal/adapter/cache"
 	"github.com/tuannm99/testkit/reference-worker/internal/adapter/mail"
+	"github.com/tuannm99/testkit/reference-worker/internal/adapter/notify"
 	"github.com/tuannm99/testkit/reference-worker/internal/adapter/outbox"
 	"github.com/tuannm99/testkit/reference-worker/internal/adapter/payment"
 	"github.com/tuannm99/testkit/reference-worker/internal/adapter/pgrepo"
@@ -43,6 +49,9 @@ var Module = fx.Options(
 		newPayment,
 		newSearch,
 		newMailer,
+		newAnalytics,
+		newAudit,
+		newCache,
 		newProcessor,
 	),
 	fx.Invoke(runHTTP, runTriggers),
@@ -79,19 +88,64 @@ func newPayment(c config.Config, clk clock.Clock, m *metrics.Metrics, l *slog.Lo
 }
 
 func newSearch(c config.Config, l *slog.Logger) *search.ES {
-	return &search.ES{URL: c.ESURL, Index: c.ESIndex, HTTP: &http.Client{Timeout: 10 * time.Second}, Log: l}
+	return &search.ES{URL: c.ESURL, Index: c.ESIndex, HistoryIndex: c.ESHistoryIndex, HTTP: &http.Client{Timeout: 10 * time.Second}, Log: l}
 }
 
 func newMailer(c config.Config) *mail.SMTP { return &mail.SMTP{Addr: c.SMTPAddr, From: c.MailFrom} }
 
-func newProcessor(c config.Config, r *pgrepo.Repo, p *payment.Client, s *search.ES, ml *mail.SMTP,
-	m *metrics.Metrics, l *slog.Logger) *usecase.Processor {
-	return &usecase.Processor{Orders: r, Payments: p, Search: s, Mailer: ml, WorkerID: c.WorkerID,
-		OrderLease: c.OrderLease, Metrics: m, Log: l, Exit: usecase.OSExit}
+func newAnalytics(c config.Config) *analytics.ClickHouse {
+	return &analytics.ClickHouse{URL: c.CHURL, Database: c.CHDatabase, User: c.CHUser, Password: c.CHPassword,
+		HTTP: &http.Client{Timeout: 10 * time.Second}}
 }
 
-func runHTTP(lc fx.Lifecycle, c config.Config, pool *pgxpool.Pool, repo *pgrepo.Repo, m *metrics.Metrics, l *slog.Logger) {
-	srv := httpserver.New(c.HTTPAddr, pool, m, &httpserver.WebhookHandler{Secret: c.WebhookSecret, Repo: repo, Log: l.With("component", "webhook")})
+func newAudit(lc fx.Lifecycle, c config.Config) (*audit.Mongo, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cl, err := audit.Open(ctx, c.MongoURI)
+	if err != nil || cl == nil {
+		return &audit.Mongo{}, err
+	}
+	lc.Append(fx.StopHook(func(ctx context.Context) error { return cl.Disconnect(ctx) }))
+	return &audit.Mongo{Client: cl, DB: c.MongoDB}, nil
+}
+
+func newCache(lc fx.Lifecycle, c config.Config) *cache.Redis {
+	if c.RedisAddr == "" {
+		return &cache.Redis{}
+	}
+	cl := redis.NewClient(&redis.Options{Addr: c.RedisAddr})
+	lc.Append(fx.StopHook(cl.Close))
+	return &cache.Redis{Client: cl, Prefix: c.RedisPrefix, TTL: time.Hour}
+}
+
+func newProcessor(c config.Config, r *pgrepo.Repo, p *payment.Client, s *search.ES, ml *mail.SMTP,
+	an *analytics.ClickHouse, au *audit.Mongo, ca *cache.Redis, pool *pgxpool.Pool,
+	m *metrics.Metrics, l *slog.Logger) *usecase.Processor {
+	proc := &usecase.Processor{Orders: r, Payments: p, Search: s, Mailer: ml, WorkerID: c.WorkerID,
+		OrderLease: c.OrderLease, Metrics: m, Log: l, Exit: usecase.OSExit}
+	// Optional integrations are wired only when configured.
+	if an.Enabled() {
+		proc.Analytics = an
+	}
+	if au.Enabled() {
+		proc.Audit = au
+	}
+	if ca.Enabled() {
+		proc.Cache = ca
+	}
+	if c.PartnerWSURL != "" {
+		proc.Notify = &notify.Queue{Pool: pool}
+	}
+	return proc
+}
+
+func runHTTP(lc fx.Lifecycle, c config.Config, pool *pgxpool.Pool, repo *pgrepo.Repo, ca *cache.Redis, se *search.ES,
+	m *metrics.Metrics, l *slog.Logger) {
+	wh := &httpserver.WebhookHandler{Secret: c.WebhookSecret, Repo: repo, Log: l.With("component", "webhook"), Search: se}
+	if ca.Enabled() {
+		wh.Cache = ca
+	}
+	srv := httpserver.New(c.HTTPAddr, pool, m, wh)
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
 			go func() {
@@ -143,6 +197,11 @@ func runTriggers(lc fx.Lifecycle, sd fx.Shutdowner, c config.Config, pool *pgxpo
 					Batch: c.PollBatch, Lease: c.PollLease, Concurrency: c.PollConcurrency, Process: proc.Process,
 					Metrics: m, Log: l.With("trigger", "dbpoll")}
 				start("dbpoll", p.Run)
+			}
+			if c.PartnerWSURL != "" {
+				nt := &notify.Notifier{URL: c.PartnerWSURL, Pool: pool, Heartbeat: c.WSHeartbeat, Log: l.With("component", "notifier")}
+				wg.Add(1)
+				go func() { defer wg.Done(); nt.Run(ctx) }()
 			}
 			if c.OutboxTopic != "" && len(c.KafkaBrokers) > 0 {
 				prod, err := kgo.NewClient(kgo.SeedBrokers(c.KafkaBrokers...), kgo.RequiredAcks(kgo.AllISRAcks()))

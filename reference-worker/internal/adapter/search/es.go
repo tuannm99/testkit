@@ -16,10 +16,11 @@ import (
 )
 
 type ES struct {
-	URL   string
-	Index string
-	HTTP  *http.Client
-	Log   *slog.Logger
+	URL          string
+	Index        string // current state of each order
+	HistoryIndex string // one document per (order, status): written in the same _bulk
+	HTTP         *http.Client
+	Log          *slog.Logger
 }
 
 type bulkResp struct {
@@ -41,9 +42,14 @@ func (e *ES) IndexOrders(ctx context.Context, orders ...domain.Order) error {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	for _, o := range orders {
+		doc := map[string]any{"order_id": o.ID, "status": o.Status, "amount_cents": o.AmountCents,
+			"currency": o.Currency, "customer_email": o.CustomerEmail, "payment_ref": o.PaymentRef, "updated_at": o.UpdatedAt}
 		_ = enc.Encode(map[string]any{"index": map[string]any{"_index": e.Index, "_id": o.ID}})
-		_ = enc.Encode(map[string]any{"order_id": o.ID, "status": o.Status, "amount_cents": o.AmountCents,
-			"currency": o.Currency, "customer_email": o.CustomerEmail, "payment_ref": o.PaymentRef, "updated_at": o.UpdatedAt})
+		_ = enc.Encode(doc)
+		if e.HistoryIndex != "" {
+			_ = enc.Encode(map[string]any{"index": map[string]any{"_index": e.HistoryIndex, "_id": o.ID + ":" + string(o.Status)}})
+			_ = enc.Encode(doc)
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.URL+"/_bulk", &buf)
 	if err != nil {

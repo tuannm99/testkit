@@ -50,6 +50,22 @@ type Config struct {
 	OrderLease time.Duration
 
 	WebhookSecret string
+
+	CHURL      string
+	CHDatabase string
+	CHUser     string
+	CHPassword string
+
+	MongoURI string
+	MongoDB  string
+
+	RedisAddr   string
+	RedisPrefix string
+
+	ESHistoryIndex string
+
+	PartnerWSURL string
+	WSHeartbeat  time.Duration
 }
 
 func Load() (Config, error) {
@@ -83,6 +99,17 @@ func Load() (Config, error) {
 		OutboxInterval:     dur("OUTBOX_INTERVAL", 200*time.Millisecond, &errs),
 		OrderLease:         dur("ORDER_LEASE", 30*time.Second, &errs),
 		WebhookSecret:      get("WEBHOOK_SECRET", ""),
+		CHURL:              get("CH_URL", ""),
+		CHDatabase:         get("CH_DATABASE", "default"),
+		CHUser:             get("CH_USER", "default"),
+		CHPassword:         get("CH_PASSWORD", ""),
+		MongoURI:           get("MONGO_URI", ""),
+		MongoDB:            get("MONGO_DB", "orders"),
+		RedisAddr:          get("REDIS_ADDR", ""),
+		RedisPrefix:        get("REDIS_PREFIX", ""),
+		ESHistoryIndex:     get("ES_HISTORY_INDEX", ""),
+		PartnerWSURL:       get("PARTNER_WS_URL", ""),
+		WSHeartbeat:        dur("WS_HEARTBEAT", time.Second, &errs),
 	}
 	host, _ := os.Hostname()
 	c.WorkerID = get("WORKER_ID", host)
