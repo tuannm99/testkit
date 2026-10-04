@@ -110,7 +110,8 @@ func (c *Consumer) handle(procCtx, stopCtx context.Context, r *kgo.Record) error
 		return c.deadLetter(procCtx, r, fmt.Errorf("poison message: %v", err), 0)
 	}
 	for attempt := 1; ; attempt++ {
-		err := c.Process(procCtx, domain.Job{ID: m.JobID, OrderID: m.OrderID, Source: "kafka", Attempt: attempt})
+		err := c.Process(procCtx, domain.Job{ID: m.JobID, OrderID: m.OrderID, Source: "kafka", Attempt: attempt,
+			Delivery: fmt.Sprintf("%s/%d/%d", r.Topic, r.Partition, r.Offset)})
 		if err == nil {
 			c.observeE2E(m)
 			return nil

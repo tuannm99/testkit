@@ -31,6 +31,9 @@ type Job struct {
 	OrderID string
 	Source  string // kafka | dbpoll
 	Attempt int
+	// Delivery identifies this physical delivery (Kafka topic/partition/offset,
+	// DB job row id). Two deliveries of the same job key must never share it.
+	Delivery string
 }
 
 // Charge is the payment gateway answer.

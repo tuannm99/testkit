@@ -150,7 +150,8 @@ func (p *Poller) run(ctx context.Context, j claimed) {
 	}
 	hbCtx, stopHB := context.WithCancel(pctx)
 	go p.heartbeat(hbCtx, j)
-	err := p.Process(pctx, domain.Job{ID: j.key, OrderID: j.orderID, Source: "dbpoll", Attempt: j.attempts})
+	err := p.Process(pctx, domain.Job{ID: j.key, OrderID: j.orderID, Source: "dbpoll", Attempt: j.attempts,
+		Delivery: fmt.Sprintf("job#%d", j.id)})
 	stopHB()
 	switch {
 	case err == nil:

@@ -76,7 +76,9 @@ func (p *Processor) Process(ctx context.Context, job domain.Job) (err error) {
 	if job.OrderID == "" {
 		return domain.Permanent(errors.New("job without order_id"))
 	}
-	owner := fmt.Sprintf("%s/%s/%d", p.WorkerID, job.ID, job.Attempt)
+	// The claim owner is unique per delivery: duplicates of one job (same job
+	// key) delivered concurrently must not both own the order.
+	owner := fmt.Sprintf("%s/%s/%d", p.WorkerID, job.Delivery, job.Attempt)
 
 	order, claimed, err := p.Orders.Claim(ctx, job.OrderID, owner, p.OrderLease)
 	if errors.Is(err, domain.ErrNotFound) {
