@@ -1,0 +1,97 @@
+# Service descriptor: everything TestKit needs to know about one service.
+# Adding a service = adding a file like this one. No core change.
+#
+# Values under env: are Go templates rendered per test case, so each case gets
+# its own namespace (database, topics, consumer group, index, mock base URL):
+#   {{ .NS }}  {{ .RunID }}  {{ pgdsn }}  {{ brokers }}  {{ topic "x" }}
+#   {{ group "x" }}  {{ index "x" }}  {{ mock "x" }}  {{ smtp }}  {{ es }}
+apiVersion: testkit/v1
+kind: Service
+name: order-worker
+description: Reference worker — pays orders from Kafka or a DB job table, calls the payment API, writes Postgres (+outbox) and Elasticsearch, mails the customer.
+owner: team-payments
+
+image:
+  name: testkit/reference-worker
+  tag: dev
+  test_tag: dev-failpoint            # built with -tags failpoint (crash / mutation tests)
+  build:
+    context: ../../reference-worker
+    test_args: { GO_TAGS: failpoint }
+
+ports: { http: 8080 }
+health: { port: http, path: /healthz, timeout: 60s }
+metrics: { port: http, path: /metrics }
+
+stores:
+  postgres:
+    migrations: ../../reference-worker/migrations/postgres
+    snapshot: [orders, jobs, outbox]
+  kafka:
+    topics:
+      - { name: orders, partitions: 3 }
+      - { name: orders.dlq, partitions: 1 }
+      - { name: order-events, partitions: 3 }
+    groups: [order-worker]
+  elasticsearch:
+    indices:
+      orders: { mappings: ../../reference-worker/es/orders.json }
+
+mocks:
+  payment:
+    kind: http
+    openapi: ../mocks/payment.openapi.yaml   # must live under mocks_dir (mounted into the Mock Hub)
+    operation: createCharge
+    api_version: "2024-06-01"
+    verified_at: "2026-10-01"
+    description: Payment gateway (charges, Idempotency-Key required)
+  mail:
+    kind: smtp
+    description: Customer notification mail (captured by Mailpit)
+
+triggers:
+  kafka:
+    topic: orders
+    group: order-worker
+    key: "{{ .job.order_id }}"
+    value: '{"job_id":"{{ .job.id }}","order_id":"{{ .job.order_id }}","enqueued_at":"{{ .now }}"}'
+  db-poll:
+    table: jobs
+    sql: "INSERT INTO jobs (job_key, order_id) VALUES ('{{ .job.id }}', '{{ .job.order_id }}')"
+    drained: "SELECT count(*) FROM jobs WHERE status IN ('queued', 'running')"
+
+entities:
+  order:
+    postgres: { table: orders, key: id }
+    elasticsearch: { table: orders, key: _id }
+  job:
+    postgres: { table: jobs, key: job_key }
+
+failpoints:
+  no_retry: payment errors are treated as permanent (retry disabled)
+  no_idempotency_key: the Idempotency-Key header is not sent
+  skip_paid_check: an already paid order is charged again
+  skip_mail_guard: the at-most-once mail guard is bypassed
+  crash_after_db_commit: the process exits right after the paid transaction commits
+  commit_before_process: Kafka offset committed before processing
+  es_ignore_bulk_errors: _bulk item errors (HTTP 200, errors=true) are ignored
+  use_worker_clock: job due time compared with the worker clock instead of the DB clock
+
+env:
+  SERVICE_NAME: order-worker
+  TESTKIT_RUN_ID: "{{ .RunID }}"
+  HTTP_ADDR: ":8080"
+  DATABASE_URL: "{{ pgdsn }}"
+  TRIGGERS: kafka,dbpoll
+  KAFKA_BROKERS: "{{ brokers }}"
+  KAFKA_TOPIC: '{{ topic "orders" }}'
+  KAFKA_GROUP: '{{ group "order-worker" }}'
+  KAFKA_DLQ_TOPIC: '{{ topic "orders.dlq" }}'
+  OUTBOX_TOPIC: '{{ topic "order-events" }}'
+  PAYMENT_URL: '{{ mock "payment" }}'
+  PAYMENT_MAX_BACKOFF: 5s
+  ES_URL: "{{ es }}"
+  ES_INDEX: '{{ index "orders" }}'
+  SMTP_ADDR: "{{ smtp }}"
+  POLL_LEASE: 6s
+  ORDER_LEASE: 10s
