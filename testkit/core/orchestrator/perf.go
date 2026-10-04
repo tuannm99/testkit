@@ -117,6 +117,10 @@ func (e *execution) perfTrigger(ctx context.Context, spec *scenario.PerfSpec, re
 	}
 	wg.Wait()
 	genWall, genCPU := time.Since(t0), cpuTime()-cpu0
+	if n := enqueueErrors.Load(); n > 0 {
+		// The generator failed, not the service: the measurement is invalid.
+		return nil, fmt.Errorf("load generator: %d of %d job(s) could not be enqueued", n, len(arrivals))
+	}
 
 	dctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	drainErr := e.trigger.Drain(dctx)
@@ -178,7 +182,7 @@ func (e *execution) perfTrigger(ctx context.Context, spec *scenario.PerfSpec, re
 		"jobs":              float64(measured),
 	}
 	if measured > 0 {
-		m["error_rate"] = float64(measured-completed+int(enqueueErrors.Load())) / float64(measured)
+		m["error_rate"] = float64(measured-completed) / float64(measured)
 	}
 	if completed > 0 && lastDone > firstSent {
 		m["throughput"] = float64(completed) / (lastDone - firstSent)

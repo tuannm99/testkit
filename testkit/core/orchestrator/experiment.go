@@ -17,6 +17,7 @@ type experiment struct {
 	mu        sync.Mutex
 	loadStop  context.CancelFunc
 	loadDone  chan struct{}
+	planned   int64 // arrivals scheduled by load.start
 	sent      atomic.Int64
 	late      atomic.Int64 // arrivals the generator could not issue on time (generator saturated)
 	errors    atomic.Int64
@@ -52,10 +53,20 @@ func (e *execution) startLoad(ctx context.Context, s kit.Step) (kit.Result, erro
 	lctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	x.mu.Lock()
 	x.loadStop, x.loadDone = cancel, make(chan struct{})
+	x.planned = int64(to - from + 1)
 	x.mu.Unlock()
 	interval := time.Second / time.Duration(rate)
+	// A job whose send has started is always completed (bounded by its own
+	// timeout): stopping the load only stops scheduling new arrivals. The
+	// load is done when every started send has returned, so sent/errors are
+	// final when load.wait/load.stop report them.
+	sendCtx := context.WithoutCancel(ctx)
 	go func() {
-		defer close(x.loadDone)
+		var inflight sync.WaitGroup
+		defer func() {
+			inflight.Wait()
+			close(x.loadDone)
+		}()
 		start := time.Now()
 		for i := from; i <= to; i++ {
 			due := start.Add(time.Duration(i-from) * interval)
@@ -68,13 +79,21 @@ func (e *execution) startLoad(ctx context.Context, s kit.Step) (kit.Result, erro
 			} else if -wait > interval {
 				x.late.Add(1)
 			}
+			if lctx.Err() != nil {
+				return
+			}
 			id := fmt.Sprintf("%s%d", prefix, i)
+			inflight.Add(1)
 			go func() {
-				if err := e.trigger.Enqueue(lctx, kit.Job{ID: id, Fields: map[string]any{"order_id": id}}); err != nil {
+				defer inflight.Done()
+				sctx, cancel := context.WithTimeout(sendCtx, 30*time.Second)
+				defer cancel()
+				if err := e.trigger.Enqueue(sctx, kit.Job{ID: id, Fields: map[string]any{"order_id": id}}); err != nil {
 					x.errors.Add(1)
+					return
 				}
+				x.sent.Add(1)
 			}()
-			x.sent.Add(1)
 		}
 	}()
 	return kit.Result{Note: fmt.Sprintf("open-model load: %d jobs/s, ids %s%d..%s%d", rate, prefix, from, prefix, to)}, nil
@@ -107,6 +126,24 @@ func (e *execution) stopLoad(wait bool, timeout time.Duration) kit.Result {
 	<-done
 	return kit.Result{Output: map[string]any{"sent": x.sent.Load(), "late": x.late.Load(), "errors": x.errors.Load()},
 		Note: fmt.Sprintf("load stopped: %d sent, %d late (generator saturated), %d enqueue errors", x.sent.Load(), x.late.Load(), x.errors.Load())}
+}
+
+// loadError reports a generator that did not deliver what it should have:
+// that is a fault of the test environment, never a product result. With
+// complete (load.wait), every planned arrival must have been sent.
+func (e *execution) loadError(complete bool) error {
+	x := e.exp()
+	x.mu.Lock()
+	planned := x.planned
+	x.mu.Unlock()
+	sent, errs := x.sent.Load(), x.errors.Load()
+	switch {
+	case errs > 0:
+		return fmt.Errorf("load generator: %d of %d job(s) could not be enqueued", errs, planned)
+	case complete && sent != planned:
+		return fmt.Errorf("load generator: %d of %d job(s) sent before the timeout", sent, planned)
+	}
+	return nil
 }
 
 // hold keeps the injected fault for `for`, checking abort conditions all the

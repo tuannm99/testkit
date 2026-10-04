@@ -368,7 +368,6 @@ type Trigger struct {
 	env  *kit.Env
 	c    *Client
 	spec struct{ topic, group, key, value string }
-	sent int
 }
 
 func NewTrigger() kit.Connector { return &Trigger{} }
@@ -416,7 +415,6 @@ func (t *Trigger) Enqueue(ctx context.Context, j kit.Job) error {
 		return err
 	}
 	n := max(j.Duplicate, 1)
-	t.sent += n
 	return t.c.Produce(ctx, t.spec.topic, []byte(fmt.Sprint(key)), []byte(fmt.Sprint(val)), nil, n)
 }
 
