@@ -167,7 +167,7 @@ func (c *Client) DashboardURL(d *Dashboard, panelID int, from, to time.Time, var
 
 // RenderPanel renders one panel to PNG through the image renderer.
 func (c *Client) RenderPanel(ctx context.Context, d *Dashboard, panelID int, from, to time.Time, vars map[string]string, w, h int) ([]byte, error) {
-	path := fmt.Sprintf("/render/d-solo/%s/%s?orgId=1&panelId=%d&from=%d&to=%d&width=%d&height=%d&tz=UTC&timeout=60%s",
+	path := fmt.Sprintf("/render/d-solo/%s/%s?orgId=1&panelId=%d&from=%d&to=%d&width=%d&height=%d&tz=UTC&theme=light&timeout=60%s",
 		d.UID, d.Slug, panelID, from.UnixMilli(), to.UnixMilli(), w, h, varsQuery(vars))
 	raw, code, err := c.do(ctx, http.MethodGet, path, nil)
 	if err != nil {

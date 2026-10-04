@@ -327,7 +327,14 @@ func (h *Hub) ServeData(w http.ResponseWriter, r *http.Request, ns, mockName, re
 	e.Rule = ruleIdx
 	h.mu.Unlock()
 	if resp == nil {
-		resp = m.defaultResponse(e.Operation)
+		resp = m.defaultResponse(e.Operation, 0)
+	} else if len(resp.Body) == 0 && resp.BodyText == "" && resp.Fault == "" {
+		// Status-only script entries answer with the documented example of that status.
+		if ex := m.defaultResponse(e.Operation, resp.Status); ex.Status == resp.Status && len(ex.Body) > 0 && string(ex.Body) != "{}" {
+			cp := *resp
+			cp.Body = ex.Body
+			resp = &cp
+		}
 	}
 
 	delay := h.delay(resp.Delay)
@@ -477,8 +484,9 @@ func (m *mock) pick(method, p, op string) (*Response, int) {
 	return nil, -1
 }
 
-// defaultResponse answers with the first 2xx example of the operation.
-func (m *mock) defaultResponse(op string) *Response {
+// defaultResponse answers with the example of the operation for status
+// (0: the first documented 2xx).
+func (m *mock) defaultResponse(op string, status int) *Response {
 	if m.spec != nil && op != "" {
 		for _, pi := range m.spec.doc.Paths.Map() {
 			for _, o := range pi.Operations() {
@@ -491,7 +499,7 @@ func (m *mock) defaultResponse(op string) *Response {
 				}
 				sort.Strings(codes)
 				for _, code := range codes {
-					if !strings.HasPrefix(code, "2") {
+					if status == 0 && !strings.HasPrefix(code, "2") || status != 0 && code != fmt.Sprint(status) {
 						continue
 					}
 					status := 200
