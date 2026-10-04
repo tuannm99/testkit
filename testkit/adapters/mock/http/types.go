@@ -106,6 +106,9 @@ type Entry struct {
 	DelayMS        float64           `json:"delay_ms,omitempty"`
 	Error          string            `json:"error,omitempty"`
 	Unconfigured   bool              `json:"unconfigured,omitempty"`
+	// InFlight: the request arrived and has not been answered yet (delay, hang).
+	InFlight bool      `json:"in_flight,omitempty"`
+	DoneAt   time.Time `json:"done_at,omitempty"`
 }
 
 // MockInfo is returned by the control API (provenance of every mock).

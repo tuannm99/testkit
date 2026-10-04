@@ -106,6 +106,24 @@ func (h *Hub) Record(ns string, e Entry) int64 {
 	return e.Seq
 }
 
+// update modifies a journal entry in place (in-flight -> answered).
+func (h *Hub) update(ns string, seq int64, fn func(*Entry)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n, ok := h.ns[ns]
+	if !ok {
+		return
+	}
+	for i := len(n.journal) - 1; i >= 0; i-- {
+		if n.journal[i].Seq == seq {
+			fn(&n.journal[i])
+			n.journal[i].InFlight = false
+			n.journal[i].DoneAt = h.now().UTC()
+			return
+		}
+	}
+}
+
 func (h *Hub) loadSpec(name string) (*spec, error) {
 	if s, ok := h.specs[name]; ok {
 		return s, nil
@@ -340,12 +358,16 @@ func (h *Hub) ServeData(w http.ResponseWriter, r *http.Request, ns, mockName, re
 	delay := h.delay(resp.Delay)
 	e.DelayMS = float64(delay) / float64(time.Millisecond)
 	e.Fault = resp.Fault
+	// Journal the call as soon as it arrives: crash tests need to know that a
+	// request reached the provider even if the answer never makes it back.
+	e.InFlight = true
+	seq := h.Record(ns, e)
+	finish := func(fn func(*Entry)) { h.update(ns, seq, fn) }
 	if delay > 0 {
 		select {
 		case <-time.After(delay):
 		case <-r.Context().Done():
-			e.Error = "client gave up during delay"
-			h.Record(ns, e)
+			finish(func(x *Entry) { x.Error = "client gave up during delay (connection closed)" })
 			return
 		}
 	}
@@ -360,26 +382,21 @@ func (h *Hub) ServeData(w http.ResponseWriter, r *http.Request, ns, mockName, re
 	if _, ok := headers["Content-Type"]; !ok && len(respBody) > 0 && resp.BodyText == "" {
 		headers["Content-Type"] = "application/json"
 	}
-	e.Status = resp.Status
-	e.RespBody = truncate(respBody, 16<<10)
 
 	switch resp.Fault {
 	case FaultReset:
-		e.Status = 0
-		h.Record(ns, e)
+		finish(func(x *Entry) { x.Status = 0 })
 		hijackReset(w)
 		return
 	case FaultHang:
-		e.Status = 0
-		seq := h.Record(ns, e)
-		_ = seq
 		select {
 		case <-r.Context().Done():
 		case <-time.After(10 * time.Minute):
 		}
+		finish(func(x *Entry) { x.Status = 0; x.Error = "hung until the client gave up" })
 		return
 	case FaultClose:
-		h.Record(ns, e)
+		finish(func(x *Entry) { x.Status = resp.Status; x.RespBody = truncate(respBody, 16<<10) })
 		hijackTruncate(w, resp.Status, headers, respBody)
 		return
 	}
@@ -388,8 +405,12 @@ func (h *Hub) ServeData(w http.ResponseWriter, r *http.Request, ns, mockName, re
 		m.idem[e.IdempotencyKey] = storedResp{status: resp.Status, headers: headers, body: respBody}
 		h.mu.Unlock()
 	}
-	h.Record(ns, e)
 	writeResp(w, resp.Status, headers, respBody)
+	status := resp.Status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	finish(func(x *Entry) { x.Status = status; x.RespBody = truncate(respBody, 16<<10) })
 }
 
 func writeResp(w http.ResponseWriter, status int, headers map[string]string, body []byte) {

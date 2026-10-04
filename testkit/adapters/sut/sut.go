@@ -63,6 +63,13 @@ func Funcs(env *kit.Env) template.FuncMap {
 		"redis":     func() string { return in.Redis },
 		"otlp":      func() string { return in.OTLP },
 		"database":  ns.Database,
+		"mocksecret": func(name string) (string, error) {
+			m, ok := env.Service.Mocks[name]
+			if !ok {
+				return "", fmt.Errorf("no mock %q", name)
+			}
+			return m.Secret, nil
+		},
 		"mocksocket": func(name string) string {
 			return fmt.Sprintf("ws://%s/ns/%s/%s", in.MockhubSocket, ns, name)
 		},
@@ -97,11 +104,7 @@ func RenderEnv(env *kit.Env) (map[string]string, error) {
 }
 
 func (c *Connector) containerName(i int) string {
-	n := fmt.Sprintf("tk-%s-%s", strings.ReplaceAll(strings.TrimPrefix(string(c.env.NS), "tk_"), "_", "-"), c.env.Service.Name)
-	if c.env.Replicas > 1 {
-		n += fmt.Sprintf("-%d", i+1)
-	}
-	return n
+	return c.env.NS.Container(c.env.Service.Name, i, max(c.env.Replicas, 1))
 }
 
 func (c *Connector) Provision(ctx context.Context, env *kit.Env) error {
@@ -159,19 +162,23 @@ func (c *Connector) Provision(ctx context.Context, env *kit.Env) error {
 		}
 		c.names = append(c.names, name)
 		if hp > 0 {
-			url := fmt.Sprintf("http://%s:%d%s", name, hp, svc.Health.Path)
-			if !env.Runner.InNetwork {
-				out, err := c.d.Run(ctx, "port", name, strconv.Itoa(hp))
-				if err != nil {
-					return err
-				}
-				hostPort := strings.TrimSpace(strings.Split(out, "\n")[0])
-				url = "http://" + hostPort + svc.Health.Path
-			}
-			c.healthOf[name] = url
+			c.healthOf[name] = svc.Health.Path
 		}
 	}
 	return c.waitHealthy(ctx, c.names)
+}
+
+// baseURL is the address of a container port as seen by the runner. From the
+// host it is the published port, which docker reassigns on every start.
+func (c *Connector) baseURL(ctx context.Context, name string, port int) (string, error) {
+	if c.env.Runner.InNetwork {
+		return fmt.Sprintf("http://%s:%d", name, port), nil
+	}
+	out, err := c.d.Run(ctx, "port", name, strconv.Itoa(port))
+	if err != nil {
+		return "", err
+	}
+	return "http://" + strings.TrimSpace(strings.Split(out, "\n")[0]), nil
 }
 
 // waitHealthy polls the health endpoint of each container (no sleep-based wait).
@@ -181,22 +188,28 @@ func (c *Connector) waitHealthy(ctx context.Context, names []string) error {
 		timeout = 60 * time.Second
 	}
 	deadline := time.Now().Add(timeout)
+	svc := c.env.Service
 	for _, n := range names {
-		url, ok := c.healthOf[n]
+		hpath, ok := c.healthOf[n]
 		if !ok {
 			continue
 		}
+		url := ""
 		for {
-			if state, _ := c.d.Run(ctx, "inspect", "-f", "{{.State.Status}} {{.State.ExitCode}}", n); strings.HasPrefix(state, "exited") || strings.HasPrefix(state, "dead") {
+			state, _ := c.d.Run(ctx, "inspect", "-f", "{{.State.Status}} {{.State.ExitCode}}", n)
+			if strings.HasPrefix(state, "exited") || strings.HasPrefix(state, "dead") {
 				logs, _ := c.d.Run(ctx, "logs", "--tail", "20", n)
 				return fmt.Errorf("%s exited before becoming healthy (%s): %s", n, state, lastLine(logs))
 			}
-			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-			resp, err := c.http.Do(req)
-			if err == nil {
-				resp.Body.Close()
-				if resp.StatusCode == 200 {
-					break
+			if base, err := c.baseURL(ctx, n, svc.Ports[svc.Health.Port]); err == nil && strings.HasPrefix(state, "running") {
+				url = base + hpath
+				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+				resp, err := c.http.Do(req)
+				if err == nil {
+					resp.Body.Close()
+					if resp.StatusCode == 200 {
+						break
+					}
 				}
 			}
 			if time.Now().After(deadline) {
@@ -344,12 +357,11 @@ func (c *Connector) scrape(ctx context.Context, metric string, labels map[string
 	sum := 0.0
 	var urls []string
 	for _, n := range c.names {
-		url := fmt.Sprintf("http://%s:%d%s", n, port, svc.Metrics.Path)
-		if !c.env.Runner.InNetwork {
-			if h, ok := c.healthOf[n]; ok && svc.Metrics.Port == svc.Health.Port {
-				url = strings.TrimSuffix(h, svc.Health.Path) + svc.Metrics.Path
-			}
+		base, err := c.baseURL(ctx, n, port)
+		if err != nil {
+			return 0, "", err
 		}
+		url := base + svc.Metrics.Path
 		urls = append(urls, url)
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		resp, err := c.http.Do(req)

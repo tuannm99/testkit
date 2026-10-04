@@ -139,6 +139,8 @@ func (c *Connector) Apply(ctx context.Context, s kit.Step) (kit.Result, error) {
 //	mock.<name>.idempotency_keys              distinct Idempotency-Key values
 //	mock.<name>.missing_idempotency_key       calls without the key
 //	mock.<name>.replayed                      calls answered from the idempotency store
+//	mock.<name>.succeeded                     2xx answers that were not replays (real side effects)
+//	mock.<name>.in_flight                     calls received and not answered yet
 //	mock.<name>.webhooks[(status=200)]        outbound webhooks sent to the SUT
 //	mock.<name>.unconfigured                  calls to a mock never configured
 func (c *Connector) Check(ctx context.Context, ref kit.CheckRef) (kit.Observation, error) {
@@ -179,6 +181,20 @@ func (c *Connector) Check(ctx context.Context, ref kit.CheckRef) (kit.Observatio
 	case "missing_idempotency_key":
 		for _, e := range j {
 			if in(e) && e.IdempotencyKey == "" {
+				n++
+			}
+		}
+	case "succeeded":
+		// Side effects really performed by the provider: 2xx answers delivered
+		// to the client that were not idempotent replays (e.g. charges made).
+		for _, e := range j {
+			if in(e) && !e.InFlight && e.Error == "" && e.Status >= 200 && e.Status < 300 && !e.Replayed {
+				n++
+			}
+		}
+	case "in_flight":
+		for _, e := range j {
+			if in(e) && e.InFlight {
 				n++
 			}
 		}
