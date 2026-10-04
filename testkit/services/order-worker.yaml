@@ -108,6 +108,7 @@ failpoints:
   skip_cache_invalidate: the Redis status cache is not refreshed when a refund arrives
   ws_no_resend: unacked notifications are not resent after a reconnect
   ws_no_heartbeat: a silent (half-open) WebSocket connection is never detected
+  outage_is_failure: a store outage (database unreachable) consumes delivery attempts and can dead-letter the job
 
 env:
   SERVICE_NAME: order-worker

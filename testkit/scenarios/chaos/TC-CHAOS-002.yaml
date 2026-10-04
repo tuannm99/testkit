@@ -53,3 +53,5 @@ expect:
 evidence:
   grafana: [throughput, consumer_lag, jobs_total]
 within: 120s
+mutations:
+  - { id: M1, failpoint: outage_is_failure, title: "Sự cố DB bị tính là lần xử lý thất bại", expect_red: [A2] }

@@ -119,7 +119,7 @@ func (c *Consumer) handle(procCtx, stopCtx context.Context, r *kgo.Record) error
 			c.observeE2E(m)
 			return nil
 		}
-		unavailable := domain.IsUnavailable(err)
+		unavailable := domain.IsUnavailable(err) && !failpoint.Enabled(failpoint.OutageIsFailure)
 		if !unavailable && (domain.IsPermanent(err) || attempt >= c.MaxAttempts) {
 			return c.deadLetter(procCtx, r, err, attempt)
 		}
