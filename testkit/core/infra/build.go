@@ -2,8 +2,13 @@ package infra
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/tuannm99/testkit/testkit/core/config"
@@ -52,6 +57,50 @@ func (s *Stack) imageExists(ctx context.Context, ref string) bool {
 	return err == nil
 }
 
+// LabelSourceHash records the hash of the build context an image was built from.
+const LabelSourceHash = "testkit.source_hash"
+
+// upToDate reports whether ref exists and was built from the current sources.
+func (s *Stack) upToDate(ctx context.Context, ref, hash string) bool {
+	out, err := s.D.Run(ctx, "image", "inspect", "--format", `{{index .Config.Labels "`+LabelSourceHash+`"}}`, ref)
+	return err == nil && strings.TrimSpace(out) == hash
+}
+
+// SourceHash hashes every file of a build context (tests, VCS and output
+// directories excluded) so images are rebuilt exactly when their sources change.
+func SourceHash(dir string, extra ...string) (string, error) {
+	h := sha256.New()
+	for _, e := range extra {
+		io.WriteString(h, e+"\n")
+	}
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		name := d.Name()
+		if d.IsDir() {
+			switch name {
+			case ".git", "out", "bin", "node_modules", "test-results", "playwright-report":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(name, "_test.go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(dir, p)
+		f, err := os.Open(p)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		io.WriteString(h, rel+"\x00")
+		_, err = io.Copy(h, f)
+		return err
+	})
+	return hex.EncodeToString(h.Sum(nil))[:16], err
+}
+
 // EnsureImage builds one of the images declared under images: in testkit.yaml
 // when it is missing (or always with force).
 func (s *Stack) EnsureImage(ctx context.Context, name string, force bool) error {
@@ -60,12 +109,17 @@ func (s *Stack) EnsureImage(ctx context.Context, name string, force bool) error 
 		return fmt.Errorf("testkit.yaml: no image %q declared", name)
 	}
 	ref := s.P.ImageTag(name)
-	if !force && s.imageExists(ctx, ref) {
+	hash, err := SourceHash(s.P.Abs(ib.Context), ib.Target, ib.Dockerfile)
+	if err != nil {
+		return err
+	}
+	if !force && s.upToDate(ctx, ref, hash) {
 		return nil
 	}
-	fmt.Fprintf(s.Out, "building %s\n", ref)
+	fmt.Fprintf(s.Out, "building %s (sources %s)\n", ref, hash)
 	args := []string{"build", "-t", ref, "-f", s.P.Abs(ib.Dockerfile),
-		"--label", LabelManaged + "=true", "--build-arg", "TESTKIT_VERSION=" + s.P.Get("TESTKIT_VERSION")}
+		"--label", LabelManaged + "=true", "--label", LabelSourceHash + "=" + hash,
+		"--build-arg", "TESTKIT_VERSION=" + s.P.Get("TESTKIT_VERSION")}
 	if ib.Target != "" {
 		args = append(args, "--target", ib.Target)
 	}
@@ -88,16 +142,20 @@ func (s *Stack) EnsureServiceImages(ctx context.Context, svc *config.Service, fo
 		return nil
 	}
 	build := func(ref string, extra map[string]string) error {
-		if !force && s.imageExists(ctx, ref) {
+		hash, err := SourceHash(svc.Path(b.Context), fmt.Sprint(extra))
+		if err != nil {
+			return err
+		}
+		if !force && s.upToDate(ctx, ref, hash) {
 			return nil
 		}
-		fmt.Fprintf(s.Out, "building %s\n", ref)
+		fmt.Fprintf(s.Out, "building %s (sources %s)\n", ref, hash)
 		dockerfile := "Dockerfile"
 		if b.Dockerfile != "" {
 			dockerfile = b.Dockerfile
 		}
 		args := []string{"build", "-t", ref, "-f", svc.Path(b.Context + "/" + dockerfile),
-			"--label", LabelManaged + "=true", "--label", LabelService + "=" + svc.Name}
+			"--label", LabelManaged + "=true", "--label", LabelService + "=" + svc.Name, "--label", LabelSourceHash + "=" + hash}
 		for k, v := range b.Args {
 			args = append(args, "--build-arg", k+"="+v)
 		}

@@ -7,10 +7,13 @@ global:
   evaluation_interval: 5s
 
 scrape_configs:
+  # Services under test: 1s scrape (functional cases last a few seconds).
   - job_name: testkit-services
+    scrape_interval: 1s
+    scrape_timeout: 1s
     docker_sd_configs:
       - host: unix:///var/run/docker.sock
-        refresh_interval: 2s
+        refresh_interval: 1s
         filters:
           - name: label
             values: ["testkit.metrics=true"]
