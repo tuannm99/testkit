@@ -1,0 +1,54 @@
+{
+  "key": "webhook-refund-50rps",
+  "case_id": "TC-PERF-002",
+  "environment": {
+    "cpus": 4,
+    "memory_gib": 16,
+    "os": "linux/amd64",
+    "docker_version": "29.6.2",
+    "images": {
+      "CLICKHOUSE_IMAGE": "clickhouse/clickhouse-server:24.8.4.13-alpine",
+      "ELASTICSEARCH_IMAGE": "elasticsearch:8.15.3",
+      "KAFKA_IMAGE": "apache/kafka:3.8.0",
+      "MONGO_IMAGE": "mongo:7.0.14",
+      "POSTGRES_IMAGE": "postgres:16.4-alpine",
+      "REDIS_IMAGE": "redis:7.4.1-alpine"
+    }
+  },
+  "recorded_at": "2026-10-04T20:24:45.516684951Z",
+  "commit": "498e69c9fd13086bd1cabb1334d953b90ae17ef9",
+  "run_id": "r20261004-202256-00dd",
+  "samples": {
+    "p95_ms": [
+      8.282127,
+      3.2559142499999987,
+      3.557667,
+      3.2336682499999987,
+      2.660927
+    ],
+    "p99_ms": [
+      12.249254,
+      5.785316759999995,
+      7.9150255000000005,
+      9.903158669999984,
+      4.538603500000001
+    ],
+    "throughput": [
+      50.06666666666667,
+      50,
+      50.06666666666667,
+      50,
+      50.06666666666667
+    ]
+  },
+  "median": {
+    "p95_ms": 3.2559142499999987,
+    "p99_ms": 7.9150255000000005,
+    "throughput": 50.06666666666667
+  },
+  "mad": {
+    "p95_ms": 0.30175275000000124,
+    "p99_ms": 2.129708740000005,
+    "throughput": 0
+  }
+}

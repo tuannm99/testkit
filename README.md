@@ -18,6 +18,20 @@ rules (assertions, SLO thresholds) — never by an AI.
 ./tk down                           # removes containers, volumes, network (idempotent)
 ```
 
+Running tests and reading the evidence:
+
+```sh
+./tk lint                                   # every scenario: steps, checks, templates, evidence
+./tk plan testkit/scenarios/order/TC-ORDER-017.yaml   # what a case will do, without running it
+./tk run testkit/scenarios                  # → out/<run_id>/report.html, junit.xml, traceability.csv, manifest.json
+./tk run --mutations testkit/scenarios/order          # + counter-evidence: each case must go red with the system broken
+./tk run testkit/scenarios/chaos            # chaos experiments (Toxiproxy; netem needs NET_ADMIN, else skipped)
+./tk baseline record testkit/scenarios/perf/TC-PERF-001.yaml   # perf baseline of this environment
+./tk run testkit/scenarios/perf             # SLOs + statistical comparison with the baseline
+./tk admit --approve --by <name> <new-case.yaml>      # mutation gate before a new case is approved
+./tk verify out/<run_id>                    # evidence bundle unchanged since the run (sha256 manifest)
+```
+
 With Go 1.24 installed you can use the CLI directly: `make build && ./bin/testkit doctor`.
 
 Behind a TLS-intercepting proxy, set `TESTKIT_BUILD_CA=/path/to/ca.pem` so image builds trust it.
@@ -29,8 +43,11 @@ testkit.yaml                 project config (paths, network, images TestKit buil
 infra/compose/               docker-compose.yml (profiles), versions.env (pinned images), testkit.env (ports, test creds)
 testkit/                     Go module: CLI, Mock Hub, core, adapters, steps
   cmd/testkit  cmd/mockhub
-  core/        config, infra (+ scenario, orchestrator, evidence, assert, report in later phases)
-  adapters/    mock/http (+ stores, triggers, chaos, collectors, executors, outputs)
+  core/        config, infra, kit, scenario, orchestrator, assert, evidence, result, report, perf
+  adapters/    mock (http, smtp, socket, mail), store, trigger, sut, chaos, exec (k6), collect
+  steps/       step and check vocabulary used by scenarios (`./tk steps`)
+  scenarios/   test cases (YAML), one directory per area
+  baselines/   perf baselines per environment fingerprint
   services/    one YAML per service under test
   mocks/       OpenAPI documents served to the Mock Hub
 reference-worker/            sample service (Kafka + DB-poll worker) proving the kit end to end
