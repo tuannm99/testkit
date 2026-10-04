@@ -1,0 +1,21 @@
+# Project-level TestKit configuration. Every path is relative to this file.
+# Nothing here is service specific: services are described in testkit/services/*.yaml.
+project: testkit                     # docker compose project name (override: TESTKIT_PROJECT)
+network: testkit_net                 # shared docker network for infra + services under test
+compose: infra/compose/docker-compose.yml
+env_files:                           # loaded by both docker compose and the CLI (process env wins)
+  - infra/compose/versions.env
+  - infra/compose/testkit.env
+services_dir: testkit/services
+scenarios_dir: testkit/scenarios
+mocks_dir: testkit/mocks             # OpenAPI/specs served to the Mock Hub
+out_dir: out
+images:                              # images TestKit builds itself (pinned by TESTKIT_VERSION)
+  mockhub:
+    context: testkit
+    dockerfile: testkit/Dockerfile
+    target: mockhub
+  runner:
+    context: testkit
+    dockerfile: testkit/Dockerfile
+    target: runner

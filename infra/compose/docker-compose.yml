@@ -1,0 +1,180 @@
+# TestKit infrastructure. Started by `testkit up`, never by hand-picked flags:
+# the CLI decides which services to start from the requested profiles and from
+# the stores/mocks declared in testkit/services/*.yaml.
+#
+# Profiles: core | stores | mocks | observability | chaos
+# Every image is pinned in versions.env; every port is bound to 127.0.0.1.
+# Containers that need special privileges declare them with the label
+# testkit.requires (docker.sock, NET_ADMIN, ...); `testkit doctor` checks them.
+
+name: ${TESTKIT_PROJECT:-testkit}
+
+networks:
+  default:
+    name: ${TESTKIT_NETWORK:-testkit_net}
+    labels:
+      testkit.managed: "true"
+
+x-managed: &managed
+  testkit.managed: "true"
+
+x-hc: &hc
+  interval: 3s
+  timeout: 5s
+  retries: 60
+  start_period: 5s
+
+services:
+  # ------------------------------------------------------------------ core
+  mockhub:
+    profiles: [core]
+    image: testkit/mockhub:${TESTKIT_VERSION}
+    labels: { <<: *managed, testkit.component: mockhub }
+    environment:
+      MOCKHUB_HTTP_ADDR: ":8081"
+      MOCKHUB_SMTP_ADDR: ":2525"
+      MOCKHUB_SOCKET_ADDR: ":8082"
+      MOCKHUB_SPEC_DIR: /specs
+      MOCKHUB_MAIL_RELAY: "mailpit:1025"
+    volumes:
+      - ../../testkit/mocks:/specs:ro
+    ports:
+      - "127.0.0.1:${TK_PORT_MOCKHUB}:8081"
+      - "127.0.0.1:${TK_PORT_MOCKHUB_SMTP}:2525"
+      - "127.0.0.1:${TK_PORT_MOCKHUB_SOCKET}:8082"
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
+
+  # ---------------------------------------------------------------- stores
+  postgres:
+    profiles: [stores]
+    image: ${POSTGRES_IMAGE}
+    labels: { <<: *managed, testkit.component: postgres }
+    environment:
+      POSTGRES_USER: ${TK_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${TK_POSTGRES_PASSWORD}
+      POSTGRES_DB: testkit
+    # Durability is traded for speed: data is throw-away and per-run databases are dropped.
+    command: ["postgres", "-c", "max_connections=400", "-c", "fsync=off",
+              "-c", "synchronous_commit=off", "-c", "full_page_writes=off",
+              "-c", "log_min_duration_statement=500"]
+    ports: ["127.0.0.1:${TK_PORT_POSTGRES}:5432"]
+    tmpfs: ["/var/lib/postgresql/data"]
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "pg_isready -U ${TK_POSTGRES_USER} -d testkit"]
+
+  kafka:
+    profiles: [stores]
+    image: ${KAFKA_IMAGE}
+    labels: { <<: *managed, testkit.component: kafka }
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:9094,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://127.0.0.1:${TK_PORT_KAFKA}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      # Topics are created per run by TestKit (namespaced by run id), never implicitly.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: "3"
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    ports: ["127.0.0.1:${TK_PORT_KAFKA}:9094"]
+    healthcheck:
+      <<: *hc
+      start_period: 10s
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null"]
+
+  elasticsearch:
+    profiles: [stores]
+    image: ${ELASTICSEARCH_IMAGE}
+    labels: { <<: *managed, testkit.component: elasticsearch }
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      xpack.ml.enabled: "false"
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+      action.destructive_requires_name: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports: ["127.0.0.1:${TK_PORT_ELASTICSEARCH}:9200"]
+    ulimits:
+      nofile:
+        soft: ${TK_NOFILE_LIMIT}
+        hard: ${TK_NOFILE_LIMIT}
+    healthcheck:
+      <<: *hc
+      start_period: 15s
+      test: ["CMD-SHELL", "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=2s' >/dev/null"]
+
+  clickhouse:
+    profiles: [stores]
+    image: ${CLICKHOUSE_IMAGE}
+    labels: { <<: *managed, testkit.component: clickhouse }
+    environment:
+      CLICKHOUSE_USER: ${TK_CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${TK_CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports: ["127.0.0.1:${TK_PORT_CLICKHOUSE}:8123"]
+    ulimits:
+      nofile:
+        soft: ${TK_NOFILE_LIMIT}
+        hard: ${TK_NOFILE_LIMIT}
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping >/dev/null"]
+
+  mongo:
+    profiles: [stores]
+    image: ${MONGO_IMAGE}
+    labels: { <<: *managed, testkit.component: mongo }
+    # Single-node replica set: transactions and change streams need one.
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--quiet"]
+    ports: ["127.0.0.1:${TK_PORT_MONGO}:27017"]
+    healthcheck:
+      <<: *hc
+      start_period: 10s
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok }\" | grep -q 1 && mongosh --quiet --eval 'db.hello().isWritablePrimary' | grep -q true"]
+
+  redis:
+    profiles: [stores]
+    image: ${REDIS_IMAGE}
+    labels: { <<: *managed, testkit.component: redis }
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["127.0.0.1:${TK_PORT_REDIS}:6379"]
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "redis-cli", "ping"]
+
+  # ----------------------------------------------------------------- mocks
+  mailpit:
+    profiles: [mocks]
+    image: ${MAILPIT_IMAGE}
+    labels: { <<: *managed, testkit.component: mailpit }
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+      MP_MAX_MESSAGES: "20000"
+    ports:
+      - "127.0.0.1:${TK_PORT_MAILPIT}:8025"
+      - "127.0.0.1:${TK_PORT_MAILPIT_SMTP}:1025"
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "/mailpit", "readyz"]
+
+  # ----------------------------------------------------------------- chaos
+  toxiproxy:
+    profiles: [chaos]
+    image: ${TOXIPROXY_IMAGE}
+    labels: { <<: *managed, testkit.component: toxiproxy }
+    command: ["-host=0.0.0.0", "-port=8474"]
+    ports: ["127.0.0.1:${TK_PORT_TOXIPROXY}:8474"]
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "/toxiproxy-cli", "list"]

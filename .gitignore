@@ -1,0 +1,7 @@
+/out/
+/bin/
+*.test
+.DS_Store
+node_modules/
+/ui-tests/test-results/
+/ui-tests/playwright-report/
