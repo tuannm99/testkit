@@ -19,3 +19,11 @@ images:                              # images TestKit builds itself (pinned by T
     context: testkit
     dockerfile: testkit/Dockerfile
     target: runner
+  otel-collector:
+    context: testkit
+    dockerfile: testkit/Dockerfile
+    target: otel-collector
+  tkstats:
+    context: testkit
+    dockerfile: testkit/Dockerfile
+    target: tkstats

@@ -1,0 +1,69 @@
+// Ships the stdout/stderr of every TestKit-managed container to Loki with the
+// run labels TestKit puts on containers (run_id, ns, service, case, trigger).
+// Needs docker.sock.
+discovery.docker "managed" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "2s"
+  filter {
+    name   = "label"
+    values = ["testkit.managed=true"]
+  }
+}
+
+discovery.relabel "managed" {
+  targets = []
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?(.*)"
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "component"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_testkit_run_id"]
+    target_label  = "run_id"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_testkit_ns"]
+    target_label  = "ns"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_testkit_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_testkit_case"]
+    target_label  = "case"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_testkit_trigger"]
+    target_label  = "trigger"
+  }
+}
+
+loki.source.docker "managed" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.docker.managed.targets
+  relabel_rules    = discovery.relabel.managed.rules
+  refresh_interval = "2s"
+  forward_to       = [loki.process.json.receiver]
+}
+
+// Lift the level of JSON logs into a label for quick filtering.
+loki.process "json" {
+  stage.json {
+    expressions = { level = "level" }
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

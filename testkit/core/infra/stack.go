@@ -89,7 +89,8 @@ type Selection struct {
 
 // Resolve maps profiles + service descriptors to compose services. Only what
 // the declared services need is selected ("chỉ dựng phần cần").
-func (s *Stack) Resolve(o UpOptions) (Selection, error) {
+// running lists compose services already up (they satisfy testkit.needs).
+func (s *Stack) Resolve(o UpOptions, running ...string) (Selection, error) {
 	cf, err := s.ComposeFile()
 	if err != nil {
 		return Selection{}, err
@@ -129,6 +130,13 @@ func (s *Stack) Resolve(o UpOptions) (Selection, error) {
 			set[name] = true
 		}
 	}
+	// A service labelled testkit.needs=<svc> only starts with that service
+	// (e.g. the Kafka exporter without a Kafka broker would never be healthy).
+	for name := range set {
+		if need := cf[name].Labels["testkit.needs"]; need != "" && !set[need] && !contains(running, need) {
+			delete(set, name)
+		}
+	}
 	if len(set) == 0 {
 		return Selection{}, fmt.Errorf("nothing to start for profiles %v", o.Profiles)
 	}
@@ -165,13 +173,32 @@ func (s *Stack) LoadState() (*State, error) {
 // Up builds TestKit images when needed, starts the selection and waits until
 // every container reports healthy. It is idempotent.
 func (s *Stack) Up(ctx context.Context, o UpOptions) (*State, error) {
-	sel, err := s.Resolve(o)
+	run, err := s.Running(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if contains(sel.Services, "mockhub") {
-		if err := s.EnsureImage(ctx, "mockhub", o.Build); err != nil {
-			return nil, err
+	var up []string
+	for svc, st := range run {
+		if strings.HasPrefix(st, "Up") {
+			up = append(up, svc)
+		}
+	}
+	sel, err := s.Resolve(o, up...)
+	if err != nil {
+		return nil, err
+	}
+	// Build the images TestKit owns (testkit/<name>:...) that the selection uses.
+	cf, err := s.ComposeFile()
+	if err != nil {
+		return nil, err
+	}
+	for _, svc := range sel.Services {
+		img := cf[svc].Image
+		if name, ok := strings.CutPrefix(img, "testkit/"); ok {
+			name, _, _ = strings.Cut(name, ":")
+			if err := s.EnsureImage(ctx, name, o.Build); err != nil {
+				return nil, err
+			}
 		}
 	}
 	timeout := o.Timeout
@@ -187,16 +214,20 @@ func (s *Stack) Up(ctx context.Context, o UpOptions) (*State, error) {
 	}
 	st := &State{Project: s.P.Name, Network: s.P.Network, Selection: sel,
 		Images: map[string]string{}, Digests: map[string]string{}, StartedAt: time.Now().UTC()}
+	// The state lists every service of the project that is up now, including
+	// ones started by an earlier `up` with other profiles.
 	if prev, _ := s.LoadState(); prev != nil {
-		// Keep services started by an earlier `up` that are still running.
-		for _, svc := range prev.Selection.Services {
-			if !contains(st.Selection.Services, svc) {
-				st.Selection.Services = append(st.Selection.Services, svc)
-			}
-		}
 		for _, p := range prev.Selection.Profiles {
 			if !contains(st.Selection.Profiles, p) {
 				st.Selection.Profiles = append(st.Selection.Profiles, p)
+			}
+		}
+	}
+	if now, err := s.Running(ctx); err == nil {
+		st.Selection.Services = nil
+		for svc, status := range now {
+			if strings.HasPrefix(status, "Up") {
+				st.Selection.Services = append(st.Selection.Services, svc)
 			}
 		}
 		sort.Strings(st.Selection.Services)
