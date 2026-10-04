@@ -107,6 +107,11 @@ panels:
   payment_latency:  { dashboard: tk-order-worker, panel_id: 6 }
   in_flight:        { dashboard: tk-order-worker, panel_id: 7 }
   poller:           { dashboard: tk-order-worker, panel_id: 8 }
+  # cumulative panels: the right evidence for short functional cases
+  payment_calls_total: { dashboard: tk-order-worker, panel_id: 9 }
+  jobs_total:          { dashboard: tk-order-worker, panel_id: 10 }
+  latency_since_start: { dashboard: tk-order-worker, panel_id: 11 }
+  side_effects_total:  { dashboard: tk-order-worker, panel_id: 12 }
   container_cpu:    { dashboard: tk-run, panel_id: 1 }
   container_memory: { dashboard: tk-run, panel_id: 2 }
   consumer_lag:     { dashboard: tk-run, panel_id: 3 }

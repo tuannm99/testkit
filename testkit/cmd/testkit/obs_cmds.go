@@ -35,7 +35,7 @@ func collector(p *config.Project) *grafana.Collector {
 		Grafana: grafana.New(ep.Grafana, host.Grafana, ep.GrafanaUser, ep.GrafanaPass),
 		Prom:    prometheus.New(ep.Prometheus),
 		Loki:    loki.New(ep.Loki),
-		Scrape:  2 * time.Second,
+		Scrape:  time.Second, // scrape interval of services under test
 	}
 }
 

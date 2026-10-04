@@ -58,6 +58,7 @@ func newRoot() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&g.root, "root", ".", "directory inside the TestKit project (testkit.yaml is searched upwards)")
 	cmd.PersistentFlags().BoolVarP(&g.verbose, "verbose", "v", false, "print every docker command")
 	cmd.AddCommand(newDoctorCmd(g), newUpCmd(g), newDownCmd(g), newStatusCmd(g),
-		newAnnotateCmd(g), newCollectCmd(g))
+		newAnnotateCmd(g), newCollectCmd(g),
+		newLintCmd(g), newPlanCmd(g), newStepsCmd(g), newRunCmd(g), newReportCmd(g), newVerifyCmd(g))
 	return cmd
 }
