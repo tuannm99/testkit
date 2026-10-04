@@ -95,3 +95,19 @@ env:
   SMTP_ADDR: "{{ smtp }}"
   POLL_LEASE: 6s
   ORDER_LEASE: 10s
+
+# Evidence panels: name -> Grafana panel. Raw data is fetched with the panel's
+# own queries (variables interpolated), so image and numbers always match.
+panels:
+  throughput:       { dashboard: tk-order-worker, panel_id: 1 }
+  error_rate:       { dashboard: tk-order-worker, panel_id: 2 }
+  p95_latency:      { dashboard: tk-order-worker, panel_id: 3 }
+  e2e_latency:      { dashboard: tk-order-worker, panel_id: 4 }
+  payment_calls:    { dashboard: tk-order-worker, panel_id: 5 }
+  payment_latency:  { dashboard: tk-order-worker, panel_id: 6 }
+  in_flight:        { dashboard: tk-order-worker, panel_id: 7 }
+  poller:           { dashboard: tk-order-worker, panel_id: 8 }
+  container_cpu:    { dashboard: tk-run, panel_id: 1 }
+  container_memory: { dashboard: tk-run, panel_id: 2 }
+  consumer_lag:     { dashboard: tk-run, panel_id: 3 }
+  log_levels:       { dashboard: tk-run, panel_id: 5 }
