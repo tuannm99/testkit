@@ -475,7 +475,7 @@ func RenderSteps(steps []StepSpec, data map[string]any) ([]kit.Step, error) {
 			return nil, fmt.Errorf("step %d (%s): %w", i+1, s.Step, err)
 		}
 		wm, _ := w.(map[string]any)
-		out[i] = kit.Step{Name: s.Step, With: wm, Line: s.Line}
+		out[i] = kit.Step{Name: s.Step, With: wm, Label: s.Name, Line: s.Line}
 	}
 	return out, nil
 }

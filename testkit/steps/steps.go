@@ -26,6 +26,7 @@ var Defs = []kit.StepDef{
 	{Name: "trigger.drain", Doc: "Wait until the trigger is drained (consumer lag 0 / no queued or running job)", Optional: []string{"timeout"}},
 	{Name: "wait.until", Doc: "Poll a check until it holds (replaces sleep); fails the step after `within`", Optional: expectKeys},
 	{Name: "assert", Doc: "Inline checkpoint: expectations that must hold at this point of the scenario", Optional: expectKeys},
+	{Name: "assert.during", Doc: "Expectations that must hold continuously for a duration (e.g. a job must NOT run before run_at)", Optional: append([]string{"for"}, expectKeys...)},
 
 	{Name: "postgres.insert", Connector: "postgres", Doc: "Insert fixture rows into an entity's table", Required: []string{"rows"}, Optional: []string{"entity", "table"}},
 	{Name: "postgres.exec", Connector: "postgres", Doc: "Execute SQL in the namespace database", Required: []string{"sql"}, Optional: []string{"args"}},
@@ -58,7 +59,7 @@ var Checks = []kit.CheckDef{
 	{Prefix: "es", Connector: "elasticsearch", Doc: "Documents (after _refresh)",
 		Examples: []string{"es.order.o1.status", "es.order.count(status=paid)"}},
 	{Prefix: "mock", Connector: "mock", Doc: "Mock Hub journal of a mock",
-		Examples: []string{"mock.payment.calls", "mock.payment.calls(status=201)", "mock.payment.schema_errors", "mock.payment.idempotency_keys"}},
+		Examples: []string{"mock.payment.calls", "mock.payment.calls(status=201)", "mock.payment.schema_errors", "mock.payment.idempotency_keys", "mock.payment.succeeded", "mock.psp.webhooks(status=200)"}},
 	{Prefix: "mail", Connector: "mail", Doc: "Mails captured by Mailpit",
 		Examples: []string{"mail.to(customer).count", "mail.to(customer).subject"}},
 	{Prefix: "sut", Connector: "sut", Doc: "Service under test containers",

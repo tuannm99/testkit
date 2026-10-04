@@ -27,6 +27,15 @@ func (n Namespace) Group(name string) string { return string(n) + "." + name }
 func (n Namespace) Index(name string) string { return string(n) + "-" + name }
 func (n Namespace) KeyPrefix() string        { return string(n) + ":" }
 
+// Container is the name of instance i (0-based) of a service under test.
+func (n Namespace) Container(service string, i, replicas int) string {
+	name := fmt.Sprintf("tk-%s-%s", strings.ReplaceAll(strings.TrimPrefix(string(n), "tk_"), "_", "-"), service)
+	if replicas > 1 {
+		name += fmt.Sprintf("-%d", i+1)
+	}
+	return name
+}
+
 // Env is everything a connector needs to provision one execution.
 type Env struct {
 	RunID     string
@@ -50,9 +59,10 @@ type Env struct {
 
 // Step is one scenario action routed to a connector.
 type Step struct {
-	Name string         `json:"step"`
-	With map[string]any `json:"with,omitempty"`
-	Line int            `json:"-"`
+	Name  string         `json:"step"`
+	With  map[string]any `json:"with,omitempty"`
+	Label string         `json:"name,omitempty"` // optional human label
+	Line  int            `json:"-"`
 }
 
 // Artifact is a file produced as evidence.

@@ -39,6 +39,17 @@ type Run struct {
 	Perf        []*PerfResult     `json:"perf,omitempty"`
 	Chaos       []*ChaosResult    `json:"chaos,omitempty"`
 	Environment map[string]string `json:"environment,omitempty"`
+	// Parity compares the executions of one case across triggers: the same
+	// scenario through Kafka and DB poll must give the same results.
+	Parity []Parity `json:"trigger_parity,omitempty"`
+}
+
+// Parity of one case across its triggers.
+type Parity struct {
+	CaseID   string   `json:"case_id"`
+	Triggers []string `json:"triggers"`
+	Match    bool     `json:"match"`
+	Diffs    []string `json:"diffs,omitempty"`
 }
 
 // Execution is one case × trigger.
@@ -84,6 +95,7 @@ type Execution struct {
 type StepRecord struct {
 	N          int            `json:"n"`
 	Name       string         `json:"step"`
+	Label      string         `json:"name,omitempty"`
 	With       map[string]any `json:"with,omitempty"`
 	Result     string         `json:"result"`
 	Error      string         `json:"error,omitempty"`

@@ -383,9 +383,21 @@ func printSummary(w io.Writer, run *result.Run, dir *evidence.Dir, d time.Durati
 		}
 		fmt.Fprintf(w, "  %-7s %-40s %s%s\n", strings.ToUpper(ex.Result), ex.ID, ex.Reason, killed)
 	}
+	for _, p := range run.Parity {
+		mark := "match"
+		if !p.Match {
+			mark = "MISMATCH " + strings.Join(p.Diffs, "; ")
+		}
+		fmt.Fprintf(w, "  parity  %-40s %s: %s\n", p.CaseID, strings.Join(p.Triggers, " vs "), mark)
+	}
 	fmt.Fprintf(w, "report: %s\n", dir.Path("report.html"))
 	if c["fail"]+c["error"] > 0 {
 		return exitErr{1, "run: failures"}
+	}
+	for _, p := range run.Parity {
+		if !p.Match {
+			return exitErr{1, "run: the same case gave different results through different triggers"}
+		}
 	}
 	for _, ex := range run.Executions {
 		for _, m := range ex.Mutations {

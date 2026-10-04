@@ -1,0 +1,33 @@
+id: TC-ORDER-018
+title: Job tới muộn cho đơn đã thanh toán không trừ tiền lại, không gửi lại mail
+requirement: REQ-232
+risk: P0
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Idempotency ở mức nghiệp vụ: một job bị phát lại (hoặc tới muộn) cho đơn đã "paid" không được gọi
+  cổng thanh toán, không được phát thêm sự kiện order.paid và không được gửi lại email.
+preconditions:
+  - Đơn o2 đã paid (payment_ref ch_o2) và mail đã gửi trước đó
+  - Cổng thanh toán là mock theo OpenAPI; mọi cuộc gọi đều được ghi journal
+vars:
+  customer: "cust-o2+{{ .ns }}@shop.test"
+input:
+  order: { id: o2, customer_email: "{{ .vars.customer }}", amount_cents: 900, currency: USD, status: paid, payment_ref: ch_o2, mail_sent_at: "2026-10-01T00:00:00Z" }
+  job: { id: o2 }
+trigger: [kafka, db-poll]
+given:
+  postgres.order: ["{{ .input.order }}"]
+  job: "{{ .input.job }}"
+expect:
+  - { id: A1, check: es.order.o2.status, eq: paid, why: "Job đã thực sự được xử lý (bước index chạy lại, idempotent) — không phải vì job chưa tới" }
+  - { id: A2, check: mock.payment.calls, eq: 0, why: "Đơn đã paid thì không gọi cổng thanh toán" }
+  - { id: A3, check: postgres.order.o2.payment_ref, eq: ch_o2, why: "Tham chiếu thanh toán cũ giữ nguyên" }
+  - { id: A4, check: mail.to(customer).count, eq: 0, why: "Mail đã gửi trước đó, không gửi lại" }
+  - { id: A5, check: kafka.order-events.count, eq: 0, why: "Không phát thêm sự kiện order.paid" }
+evidence:
+  grafana: [jobs_total, payment_calls_total]
+within: 30s
+mutations:
+  - { id: M1, failpoint: skip_paid_check, title: "Bỏ kiểm tra đơn đã paid", expect_red: [A2] }

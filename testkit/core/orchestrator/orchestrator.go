@@ -158,8 +158,65 @@ func (r *Runner) Run(ctx context.Context, cases []*scenario.Case, opt Options) (
 		}
 	}
 	run.Executions = results
+	run.Parity = parity(results)
 	run.FinishedAt = time.Now().UTC()
 	return run, dir, nil
+}
+
+// parity compares, per case, the result and the observed value of every
+// assertion across triggers.
+func parity(execs []*result.Execution) []result.Parity {
+	byCase := map[string][]*result.Execution{}
+	var order []string
+	for _, ex := range execs {
+		if ex.Mutation != "" || ex.Trigger == "" || ex.Attempt > 1 {
+			continue
+		}
+		if _, ok := byCase[ex.CaseID]; !ok {
+			order = append(order, ex.CaseID)
+		}
+		byCase[ex.CaseID] = append(byCase[ex.CaseID], ex)
+	}
+	var out []result.Parity
+	for _, id := range order {
+		list := byCase[id]
+		comparable := len(list) >= 2
+		for _, ex := range list {
+			if ex.Result == result.Error || ex.Result == result.Skipped {
+				comparable = false // an execution that did not run cannot be compared
+			}
+		}
+		if !comparable {
+			continue
+		}
+		p := result.Parity{CaseID: id, Match: true}
+		ref := list[0]
+		for _, ex := range list {
+			p.Triggers = append(p.Triggers, ex.Trigger)
+		}
+		for _, ex := range list[1:] {
+			if ex.Result != ref.Result {
+				p.Diffs = append(p.Diffs, fmt.Sprintf("result: %s=%s, %s=%s", ref.Trigger, ref.Result, ex.Trigger, ex.Result))
+			}
+			got := map[string]assert.Outcome{}
+			for _, a := range ex.Assertions {
+				got[a.ID] = a
+			}
+			for _, a := range ref.Assertions {
+				b, ok := got[a.ID]
+				switch {
+				case !ok:
+					p.Diffs = append(p.Diffs, fmt.Sprintf("%s: missing in %s", a.ID, ex.Trigger))
+				case a.Result != b.Result || assert.Show(a.Actual) != assert.Show(b.Actual):
+					p.Diffs = append(p.Diffs, fmt.Sprintf("%s: %s=%s (%s), %s=%s (%s)", a.ID, ref.Trigger, assert.Show(a.Actual), a.Result,
+						ex.Trigger, assert.Show(b.Actual), b.Result))
+				}
+			}
+		}
+		p.Match = len(p.Diffs) == 0
+		out = append(out, p)
+	}
+	return out
 }
 
 // namespace is short, unique per execution and valid in every store.
@@ -264,6 +321,13 @@ func (r *Runner) execute(ctx context.Context, dir *evidence.Dir, opt Options, c 
 		e.fail(result.Error, result.ClassTest, "render", err)
 		return ex
 	}
+	// Address of the service under test on the network (webhooks call it).
+	replicas := max(c.SUT.Replicas, 1)
+	sutData := map[string]any{"host": ns.Container(svc.Name, 0, replicas)}
+	for name, port := range svc.Ports {
+		sutData[name] = fmt.Sprintf("http://%s:%d", ns.Container(svc.Name, 0, replicas), port)
+	}
+	data["sut"] = sutData
 	ex.Input = data["input"]
 	ex.Vars, _ = data["vars"].(map[string]any)
 	specs, err := c.Expand()
@@ -432,7 +496,7 @@ func (r *Runner) execute(ctx context.Context, dir *evidence.Dir, opt Options, c 
 // runSteps executes steps in order; it returns false on the first failure.
 func (e *execution) runSteps(ctx context.Context, steps []kit.Step, within time.Duration) bool {
 	for i, s := range steps {
-		rec := result.StepRecord{N: i + 1, Name: s.Name, With: redact(s.With), StartedAt: time.Now().UTC()}
+		rec := result.StepRecord{N: i + 1, Name: s.Name, Label: s.Label, With: redact(s.With), StartedAt: time.Now().UTC()}
 		res, err := e.applyStep(ctx, s, within)
 		rec.FinishedAt = time.Now().UTC()
 		rec.Result = "ok"
@@ -446,7 +510,11 @@ func (e *execution) runSteps(ctx context.Context, steps []kit.Step, within time.
 		if strings.HasPrefix(s.Name, "chaos.") || strings.Contains(s.Name, "fault") {
 			kind = "fault"
 		}
-		e.event(result.Event{At: rec.StartedAt, End: rec.FinishedAt, Kind: kind, Name: fmt.Sprintf("%d. %s", i+1, s.Name),
+		label := s.Name
+		if s.Label != "" {
+			label += " — " + s.Label
+		}
+		e.event(result.Event{At: rec.StartedAt, End: rec.FinishedAt, Kind: kind, Name: fmt.Sprintf("%d. %s", i+1, label),
 			Status: rec.Result, Detail: firstNonEmpty(rec.Error, res.Note)})
 		e.annotate(rec.StartedAt, rec.FinishedAt, kind, fmt.Sprintf("step %d %s %s", i+1, s.Name, rec.Result))
 		if err != nil {
@@ -528,6 +596,34 @@ func (e *execution) applyStep(ctx context.Context, s kit.Step, within time.Durat
 		dctx, cancel := context.WithTimeout(ctx, kit.Dur(s.With, "timeout", within))
 		defer cancel()
 		return kit.Result{}, e.trigger.Drain(dctx)
+	case "assert.during":
+		// The expectations must hold continuously for `for` (observed, not slept).
+		exps, err := inlineExpectations(s)
+		if err != nil {
+			return kit.Result{}, &TestError{err}
+		}
+		d := kit.Dur(s.With, "for", 3*time.Second)
+		end := time.Now().Add(d)
+		var last []assert.Outcome
+		for n := 1; ; n++ {
+			last = last[:0]
+			for _, x := range exps {
+				o := assert.Evaluate(ctx, x, e.resolve)
+				o.Attempts = n
+				last = append(last, o)
+				if o.Result != "pass" {
+					return kit.Result{Output: last}, &AssertError{Outcomes: last}
+				}
+			}
+			if !time.Now().Before(end) {
+				return kit.Result{Output: last, Note: fmt.Sprintf("held for %s (%d observations)", d, n)}, nil
+			}
+			select {
+			case <-ctx.Done():
+				return kit.Result{}, ctx.Err()
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
 	case "wait.until", "assert":
 		exps, err := inlineExpectations(s)
 		if err != nil {

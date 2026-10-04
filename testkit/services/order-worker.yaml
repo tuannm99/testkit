@@ -26,7 +26,7 @@ metrics: { port: http, path: /metrics }
 stores:
   postgres:
     migrations: ../../reference-worker/migrations/postgres
-    snapshot: [orders, jobs, outbox]
+    snapshot: [orders, jobs, outbox, payment_events]
   kafka:
     topics:
       - { name: orders, partitions: 3 }
@@ -45,6 +45,12 @@ mocks:
     api_version: "2024-06-01"
     verified_at: "2026-10-01"
     description: Payment gateway (charges, Idempotency-Key required)
+  psp:
+    kind: webhook
+    api_version: "2024-06-01"
+    verified_at: "2026-10-01"
+    secret: test-only-webhook-secret     # throw-away value, also given to the service
+    description: Payment provider calling back the service (refund events)
   mail:
     kind: smtp
     description: Customer notification mail (captured by Mailpit)
@@ -66,6 +72,8 @@ entities:
     elasticsearch: { table: orders, key: _id }
   job:
     postgres: { table: jobs, key: job_key }
+  payment_event:
+    postgres: { table: payment_events, key: event_id }
 
 failpoints:
   no_retry: payment errors are treated as permanent (retry disabled)
@@ -76,6 +84,7 @@ failpoints:
   commit_before_process: Kafka offset committed before processing
   es_ignore_bulk_errors: _bulk item errors (HTTP 200, errors=true) are ignored
   use_worker_clock: job due time compared with the worker clock instead of the DB clock
+  poll_busy_loop: the poller does not back off when the job table is empty
 
 env:
   SERVICE_NAME: order-worker
@@ -95,6 +104,7 @@ env:
   SMTP_ADDR: "{{ smtp }}"
   POLL_LEASE: 6s
   ORDER_LEASE: 10s
+  WEBHOOK_SECRET: '{{ mocksecret "psp" }}'
 
 # Evidence panels: name -> Grafana panel. Raw data is fetched with the panel's
 # own queries (variables interpolated), so image and numbers always match.

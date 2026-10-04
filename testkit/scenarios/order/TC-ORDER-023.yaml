@@ -1,0 +1,41 @@
+id: TC-ORDER-023
+title: SIGTERM giữa chừng — job đang chạy hoàn tất trước khi dừng, không xử lý lại sau khởi động
+requirement: REQ-233
+risk: P1
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Khi bị dừng êm (SIGTERM, ví dụ khi deploy), worker phải ngừng nhận job mới nhưng hoàn tất job đang
+  chạy và ack nó, để sau khi khởi động lại không xử lý trùng.
+preconditions:
+  - Cổng thanh toán chậm 2s để SIGTERM tới khi job đang chạy
+vars:
+  customer: "cust-o6+{{ .ns }}@shop.test"
+input:
+  order: { id: o6, customer_email: "{{ .vars.customer }}", amount_cents: 700, currency: USD, status: pending }
+  job: { id: o6 }
+trigger: [kafka, db-poll]
+given:
+  postgres.order: ["{{ .input.order }}"]
+  mock.payment: ["201(delay=2s)"]
+  job: "{{ .input.job }}"
+steps:
+  - step: wait.until
+    with: { check: mock.payment.in_flight, eq: 1, within: 20s, why: "job đang chạy (request thanh toán đang treo)" }
+  - step: sut.stop
+    with: { timeout: 30 }
+  - step: assert
+    with:
+      within: 1s
+      expect:
+        - { id: C1, check: postgres.order.o6.status, eq: paid, why: "Job đang chạy đã hoàn tất trước khi tiến trình thoát" }
+        - { id: C2, check: sut.running, eq: 0, why: "Tiến trình đã thoát" }
+  - step: sut.start
+expect:
+  - { id: A1, check: mock.payment.calls, eq: 1, why: "Không gọi lại cổng thanh toán sau khi khởi động (job đã được ack)" }
+  - { id: A2, check: mail.to(customer).count, eq: 1, why: "Một mail duy nhất" }
+  - { id: A3, check: sut.log(shutdown complete).count, eq: 1, why: "Tắt êm thực sự diễn ra (log của worker)" }
+evidence:
+  grafana: [jobs_total]
+within: 30s

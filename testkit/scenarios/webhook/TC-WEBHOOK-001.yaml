@@ -1,0 +1,44 @@
+id: TC-WEBHOOK-001
+title: Webhook hoàn tiền — chữ ký sai bị từ chối, trùng áp dụng một lần, sai thứ tự và payload cũ bị bỏ qua
+requirement: REQ-250
+risk: P0
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Cổng thanh toán gọi ngược service khi hoàn tiền. Service phải kiểm chữ ký HMAC, chỉ áp dụng mỗi sự kiện
+  một lần, không lùi trạng thái khi sự kiện cũ tới sau sự kiện mới, và từ chối phiên bản payload không hỗ trợ.
+preconditions:
+  - Đơn w1 đã paid
+  - Mock Hub ký webhook bằng secret thử nghiệm của mock psp (sha256=HMAC(secret, body))
+input:
+  order: { id: w1, customer_email: "w1+{{ .ns }}@shop.test", amount_cents: 2500, currency: USD, status: paid, payment_ref: ch_w1 }
+  refund_v2: { id: evt_2, type: charge.refunded, api_version: "2024-06-01", seq: 2, data: { order_id: w1 } }
+  refund_v1_late: { id: evt_1, type: charge.refunded, api_version: "2024-06-01", seq: 1, data: { order_id: w1 } }
+  forged: { id: evt_9, type: charge.refunded, api_version: "2024-06-01", seq: 9, data: { order_id: w1 } }
+  old_payload: { id: evt_3, type: charge.refunded, api_version: "2023-01-01", seq: 3, data: { order_id: w1 } }
+given:
+  postgres.order: ["{{ .input.order }}"]
+steps:
+  - step: webhook.send
+    name: chữ ký sai
+    with: { mock: psp, url: "{{ .sut.http }}/webhooks/payment", sign: invalid, body: "{{ .input.forged }}" }
+  - step: webhook.send
+    name: sự kiện hợp lệ, giao trùng 2 lần
+    with: { mock: psp, url: "{{ .sut.http }}/webhooks/payment", body: "{{ .input.refund_v2 }}", repeat: 2 }
+  - step: webhook.send
+    name: sự kiện cũ hơn tới sau (sai thứ tự)
+    with: { mock: psp, url: "{{ .sut.http }}/webhooks/payment", body: "{{ .input.refund_v1_late }}" }
+  - step: webhook.send
+    name: payload phiên bản cũ
+    with: { mock: psp, url: "{{ .sut.http }}/webhooks/payment", body: "{{ .input.old_payload }}" }
+expect:
+  - { id: A1, check: postgres.order.w1.status, eq: refunded, why: "Sự kiện hợp lệ được áp dụng" }
+  - { id: A2, check: postgres.order.w1.last_event_seq, eq: 2, why: "Sự kiện cũ (seq 1) tới sau không làm lùi trạng thái" }
+  - { id: A3, check: postgres.payment_event.count, eq: 2, why: "Ghi nhận evt_2 một lần (trùng bị bỏ) và evt_1; chữ ký sai và payload cũ không được ghi" }
+  - { id: A4, check: postgres.payment_event.count(applied=true), eq: 1, why: "Chỉ một sự kiện được áp dụng" }
+  - { id: A5, check: mock.psp.webhooks(status=401), eq: 1, why: "Chữ ký sai bị từ chối 401" }
+  - { id: A6, check: mock.psp.webhooks(status=200), eq: 3, why: "Hai bản giao trùng và sự kiện cũ đều được trả 200 (nhà cung cấp không gửi lại mãi)" }
+  - { id: A7, check: mock.psp.webhooks(status=422), eq: 1, why: "Payload phiên bản không hỗ trợ bị từ chối 422" }
+evidence: {}
+within: 15s

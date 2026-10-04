@@ -67,6 +67,13 @@ details summary{cursor:pointer;color:var(--acc)}
 <td class="num">{{.Duration}}</td></tr>{{end}}
 </table>
 
+{{if .Run.Parity}}
+<h2>So khớp giữa các trigger (cùng kịch bản, khác đường nhận job)</h2>
+<table><tr><th>Testcase</th><th>Trigger</th><th>Khớp</th><th>Khác biệt (assertion: giá trị thực tế theo trigger)</th></tr>
+{{range .Run.Parity}}<tr><td>{{.CaseID}}</td><td>{{join .Triggers ", "}}</td><td><span class="pill {{if .Match}}ok{{else}}bad{{end}}">{{if .Match}}khớp{{else}}khác{{end}}</span></td><td>{{range .Diffs}}{{.}}<br>{{end}}</td></tr>{{end}}
+</table>
+{{end}}
+
 <h2>Ma trận truy vết (yêu cầu → testcase → kết quả)</h2>
 <table><tr><th>Yêu cầu</th><th>Testcase</th></tr>
 {{range .Matrix}}<tr><td>{{.Req}}</td><td>{{range .Execs}}<a href="#{{anchor .ID}}">{{.ID}}</a> <span class="pill {{cls .Result}}">{{.Result}}</span><br>{{end}}</td></tr>{{end}}
@@ -96,7 +103,7 @@ details summary{cursor:pointer;color:var(--acc)}
 
 <h4>3. Các bước và timeline</h4>
 <table><tr><th>#</th><th>Bước</th><th>Tham số</th><th>Kết quả</th><th>Bắt đầu</th><th>Thời lượng</th></tr>
-{{range .Steps}}<tr><td class="num">{{.N}}</td><td><code>{{.Name}}</code></td><td><code>{{compact .With}}</code>{{with .Output}}<details><summary>kết quả</summary><pre>{{compact .}}</pre></details>{{end}}</td>
+{{range .Steps}}<tr><td class="num">{{.N}}</td><td><code>{{.Name}}</code>{{if .Label}}<div class="ev">{{.Label}}</div>{{end}}</td><td><code>{{compact .With}}</code>{{with .Output}}<details><summary>kết quả</summary><pre>{{compact .}}</pre></details>{{end}}</td>
 <td><span class="pill {{cls .Result}}">{{.Result}}</span> {{.Error}}</td><td>{{since $ex.StartedAt .StartedAt}}</td><td>{{dur .StartedAt .FinishedAt}}</td></tr>{{end}}
 </table>
 <details><summary>Timeline đầy đủ ({{len .Timeline}} sự kiện, <a href="{{.Dir}}/timeline.json">timeline.json</a>)</summary>

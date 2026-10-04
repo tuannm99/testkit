@@ -1,0 +1,33 @@
+id: TC-ORDER-022
+title: Message độc (poison) vào DLQ, không chặn các job phía sau trong cùng partition
+requirement: REQ-234
+risk: P1
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Một record không đọc được trên topic orders phải được chuyển sang DLQ kèm lý do, offset được commit,
+  và job hợp lệ phía sau (cùng key, cùng partition) vẫn được xử lý.
+preconditions:
+  - Record độc và job hợp lệ có cùng key o5 nên nằm cùng partition, record độc đứng trước
+vars:
+  customer: "cust-o5+{{ .ns }}@shop.test"
+input:
+  order: { id: o5, customer_email: "{{ .vars.customer }}", amount_cents: 500, currency: USD, status: pending }
+  poison: "{not json"
+trigger: [kafka]
+given:
+  postgres.order: ["{{ .input.order }}"]
+  mock.payment: [201]
+steps:
+  - step: kafka.produce
+    with: { topic: orders, key: o5, value: "{{ .input.poison }}" }
+  - step: trigger.enqueue
+    with: { id: o5 }
+expect:
+  - { id: A1, check: kafka.topic(orders.dlq).count, eq: 1, why: "Record độc được chuyển sang DLQ" }
+  - { id: A2, check: postgres.order.o5.status, eq: paid, why: "Job hợp lệ phía sau không bị chặn" }
+  - { id: A3, check: kafka.lag(order-worker), eq: 0, why: "Cả record độc và job đều đã được commit offset" }
+evidence:
+  grafana: [jobs_total, side_effects_total]
+within: 30s
