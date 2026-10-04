@@ -120,6 +120,14 @@ func (p *Project) Abs(rel string) string {
 	return filepath.Join(p.Root, rel)
 }
 
+// Rel shows a path relative to the project root when it is inside it.
+func (p *Project) Rel(path string) string {
+	if r, err := filepath.Rel(p.Root, path); err == nil && !strings.HasPrefix(r, "..") {
+		return r
+	}
+	return path
+}
+
 // Get returns a configuration value: process env first, then env files.
 func (p *Project) Get(key string) string {
 	if v, ok := os.LookupEnv(key); ok {

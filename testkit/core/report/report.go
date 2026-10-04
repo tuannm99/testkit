@@ -10,13 +10,13 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"math"
-	"strconv"
 	"html/template"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -396,14 +396,23 @@ var funcs = template.FuncMap{
 			return "lỗi môi trường / hạ tầng test"
 		case result.ClassFlaky:
 			return "flaky (cách ly, không tính là pass)"
+		case result.ClassCapability:
+			return "bỏ qua: máy chạy thiếu quyền/khả năng được khai báo (không tính là fail)"
 		case result.ClassTest:
 			return "lỗi kịch bản test"
 		}
 		return c
 	},
-	"base":   filepath.Base,
-	"pct":    func(v float64) float64 { return v * 100 },
-	"num":    fmtNum,
+	"base": filepath.Base,
+	"pct":  func(v float64) float64 { return v * 100 },
+	"num":  fmtNum,
+	"admitVN": func(s string) string {
+		return map[string]string{"admitted": "đạt — chờ người duyệt", "rejected": "không đạt", "incomplete": "chưa đủ điều kiện đánh giá"}[s]
+	},
+	"ruleVN": func(s string) string {
+		return map[string]string{"has-mutations": "có mutation", "green-and-stable": "xanh ổn định",
+			"mutations-killed": "đỏ khi có lỗi", "baseline-compared": "so với baseline"}[s]
+	},
 	"worse": func(v float64) string {
 		switch {
 		case v > 0:

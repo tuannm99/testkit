@@ -67,6 +67,16 @@ details summary{cursor:pointer;color:var(--acc)}
 <td class="num">{{.Duration}}</td></tr>{{end}}
 </table>
 
+{{if .Run.Admission}}
+<h2>Kiểm duyệt testcase (mutation gate)</h2>
+<p>Testcase mới chỉ được duyệt khi: xanh trên hệ thống không lỗi nhiều lần liên tiếp (mỗi trigger), và đỏ khi từng lỗi khai báo được cài vào (failpoint) — tức là testcase thật sự bắt được lỗi nó tuyên bố. Công cụ chỉ báo cáo theo luật cố định; người duyệt ký bằng <code>testkit admit --approve --by &lt;tên&gt;</code>.</p>
+<table><tr><th>Testcase</th><th>Kết luận</th><th>Luật</th></tr>
+{{range .Run.Admission}}<tr><td>{{.CaseID}}<div class="muted ev">{{.File}}</div></td>
+<td><span class="pill {{if eq .Status "admitted"}}ok{{else if eq .Status "incomplete"}}err{{else}}bad{{end}}">{{admitVN .Status}}</span></td>
+<td>{{range .Rules}}<div><span class="pill {{if not .OK}}bad{{else if .Skipped}}err{{else}}ok{{end}}">{{ruleVN .Name}}</span> {{.Detail}}{{if .Evidence}} <span class="ev">{{range .Evidence}}<a href="{{.}}">{{.}}</a> {{end}}</span>{{end}}</div>{{end}}</td></tr>{{end}}
+</table>
+{{end}}
+
 {{if .Run.Parity}}
 <h2>So khớp giữa các trigger (cùng kịch bản, khác đường nhận job)</h2>
 <table><tr><th>Testcase</th><th>Trigger</th><th>Khớp</th><th>Khác biệt (assertion: giá trị thực tế theo trigger)</th></tr>

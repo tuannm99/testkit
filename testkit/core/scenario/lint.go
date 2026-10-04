@@ -237,6 +237,12 @@ func Lint(c *Case, services map[string]*config.Service, reg *kit.Registry) []Iss
 	if c.Generated != nil && c.Status == "approved" && c.Owner == "" {
 		warnf(line("generated"), "generated case approved without an owner (who reviewed it?)")
 	}
+	if c.Generated != nil && c.Status == "approved" && c.Admission == nil {
+		errf(line("status"), "case drafted by %s is approved without passing the mutation gate: run `testkit admit %s --approve --by <name>`", c.Generated.By, c.File)
+	}
+	if c.Admission != nil && (c.Admission.RunID == "" || c.Admission.By == "") {
+		errf(line("admission"), "admission needs run_id and by (written by `testkit admit --approve`)")
+	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Line < out[j].Line })
 	return out
 }

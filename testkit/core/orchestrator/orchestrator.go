@@ -45,6 +45,7 @@ type Options struct {
 	Triggers     []string // restrict the trigger dimension
 	Retries      int      // re-run failed executions to detect flaky tests
 	Mutations    bool     // also run each case's mutations (counter-evidence)
+	Stability    int      // a passing execution is re-run until it passed this many times (admission)
 	OnlyApproved bool     // release suites only accept approved cases
 	Suite        string
 	Command      []string
@@ -134,6 +135,16 @@ func (r *Runner) Run(ctx context.Context, cases []*scenario.Case, opt Options) (
 				break
 			}
 		}
+		// Stability: a pass must repeat; one red repetition makes it flaky.
+		for attempt := 2; attempt <= opt.Stability && j.mutation == nil && ex.Result == result.Pass && ctx.Err() == nil; attempt++ {
+			again := r.execute(ctx, dir, opt, j.c, j.trigger, nil, attempt)
+			if again.Result != result.Pass {
+				ex.Result, ex.Class = result.Fail, result.ClassFlaky
+				ex.Reason = fmt.Sprintf("passed on attempt 1, %s on repetition %d (%s: %s): not stable", again.Result, attempt, again.Dir, again.Reason)
+				break
+			}
+			ex.Repetitions = attempt
+		}
 		results[i] = ex
 	}
 	sem := make(chan struct{}, opt.Parallel)
@@ -184,6 +195,11 @@ func (r *Runner) Run(ctx context.Context, cases []*scenario.Case, opt Options) (
 	}
 	run.Executions = results
 	run.Parity = parity(results)
+	for _, ex := range results {
+		if ex.Class == result.ClassCapability && ex.Mutation == "" {
+			run.Notes = append(run.Notes, fmt.Sprintf("%s skipped (not failed): %s", ex.ID, ex.Reason))
+		}
+	}
 	for _, ex := range results {
 		if ex.Chaos != nil && ex.Mutation == "" {
 			run.Chaos = append(run.Chaos, ex.Chaos)
@@ -393,6 +409,7 @@ func (r *Runner) execute(ctx context.Context, dir *evidence.Dir, opt Options, c 
 			for _, need := range def.Requires {
 				if !r.Caps[need] {
 					ex.Result, ex.Reason = result.Skipped, fmt.Sprintf("step %s needs capability %s, not available on this host (testkit doctor)", s.Name, need)
+					ex.Class = result.ClassCapability
 					return ex
 				}
 			}
@@ -647,9 +664,11 @@ func (e *execution) applyStep(ctx context.Context, s kit.Step, within time.Durat
 	case "load.start":
 		return e.startLoad(ctx, s)
 	case "load.stop":
-		return e.stopLoad(false, 0), nil
+		res := e.stopLoad(false, 0)
+		return res, e.loadError(false)
 	case "load.wait":
-		return e.stopLoad(true, kit.Dur(s.With, "timeout", 5*time.Minute)), nil
+		res := e.stopLoad(true, kit.Dur(s.With, "timeout", 5*time.Minute))
+		return res, e.loadError(true)
 	case "chaos.hold":
 		return e.hold(ctx, s)
 	case "chaos.recover":

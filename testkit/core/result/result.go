@@ -23,6 +23,7 @@ const (
 	ClassEnvironment = "environment" // provisioning / infrastructure / dependency of the kit failed
 	ClassFlaky       = "flaky"       // failed then passed on retry with no change
 	ClassTest        = "test"        // the scenario itself is invalid at run time (template, step params)
+	ClassCapability  = "capability"  // skipped: the host lacks a declared privilege (NET_ADMIN, netem, docker.sock)
 )
 
 // Run is one `testkit run`.
@@ -38,6 +39,7 @@ type Run struct {
 	Gate        *Gate             `json:"gate,omitempty"`
 	Perf        []*PerfResult     `json:"perf,omitempty"`
 	Chaos       []*ChaosResult    `json:"chaos,omitempty"`
+	Admission   []*Admission      `json:"admission,omitempty"` // `testkit admit` verdicts
 	Environment map[string]string `json:"environment,omitempty"`
 	// Parity compares the executions of one case across triggers: the same
 	// scenario through Kafka and DB poll must give the same results.
@@ -76,6 +78,7 @@ type Execution struct {
 	Assertions    []assert.Outcome `json:"assertions"`
 	Result        string           `json:"result"`
 	Class         string           `json:"classification,omitempty"`
+	Repetitions   int              `json:"repetitions,omitempty"` // passes in a row (stability check)
 	Reason        string           `json:"reason,omitempty"`
 	FailedAt      string           `json:"failed_at,omitempty"` // step / phase where it diverged
 	StartedAt     time.Time        `json:"started_at"`
@@ -220,6 +223,35 @@ type ChaosResult struct {
 	MaxRecover  float64  `json:"max_recovery_seconds,omitempty"`
 	Dir         string   `json:"dir"`
 	Requirement []string `json:"requirement"`
+}
+
+// Admission statuses.
+const (
+	Admitted   = "admitted"   // every rule met: the case may be approved by a person
+	Rejected   = "rejected"   // a rule failed: the case stays draft
+	Incomplete = "incomplete" // could not be fully evaluated here (missing capability)
+)
+
+// Admission is the mutation-gate verdict for one case: it is green on the
+// unbroken system, repeatably, and goes red when each declared defect is
+// injected. It never approves a case by itself; a person does (`--approve`).
+type Admission struct {
+	CaseID    string   `json:"case_id"`
+	File      string   `json:"file"`
+	Status    string   `json:"status"`
+	Stability int      `json:"stability"` // passes required per trigger
+	Triggers  []string `json:"triggers"`
+	Killed    []string `json:"mutations_killed"` // M1[kafka], ...
+	Rules     []Rule   `json:"rules"`
+}
+
+// Rule is one admission rule and how the case fared.
+type Rule struct {
+	Name     string   `json:"name"`
+	OK       bool     `json:"ok"`
+	Skipped  bool     `json:"skipped,omitempty"`
+	Detail   string   `json:"detail"`
+	Evidence []string `json:"evidence,omitempty"`
 }
 
 // Counts returns executions by result.

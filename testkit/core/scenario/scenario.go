@@ -46,6 +46,7 @@ type Case struct {
 	Perf          *PerfSpec      `yaml:"perf"`
 	Tags          []string       `yaml:"tags"`
 	Generated     *Generated     `yaml:"generated"` // provenance when drafted by a tool/AI
+	Admission     *Admission     `yaml:"admission"` // written by `testkit admit --approve`
 
 	File string         `yaml:"-"`
 	Line map[string]int `yaml:"-"` // field -> line, for lint messages
@@ -174,6 +175,16 @@ type Mutation struct {
 	Failpoint string   `yaml:"failpoint"`
 	Title     string   `yaml:"title"`
 	ExpectRed []string `yaml:"expect_red"` // assertion ids that must fail (empty: any)
+}
+
+// Admission records the mutation-gate run that preceded a person's approval.
+type Admission struct {
+	RunID     string   `yaml:"run_id"`
+	At        string   `yaml:"at"`
+	By        string   `yaml:"by"` // the person who approved
+	Stability int      `yaml:"stability"`
+	Killed    []string `yaml:"mutations_killed"`
+	Manifest  string   `yaml:"manifest_sha256"` // seals the evidence bundle of that run
 }
 
 // Generated records provenance of drafted cases.

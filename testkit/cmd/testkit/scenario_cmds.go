@@ -282,6 +282,92 @@ func snapshotTables(svc *config.Service) []string {
 	return svc.Stores.Postgres.Snapshot
 }
 
+// runSetup is what `run` and `admit` share: linted cases, healthy
+// infrastructure, images, capabilities, observability and baselines.
+type runSetup struct {
+	p        *config.Project
+	st       *infra.Stack
+	services map[string]*config.Service
+	cases    []*scenario.Case
+	r        *orchestrator.Runner
+}
+
+func prepareRun(cmd *cobra.Command, g *globals, args []string) (*runSetup, error) {
+	out := cmd.OutOrStdout()
+	p, st, err := g.stack(out)
+	if err != nil {
+		return nil, err
+	}
+	services, err := config.LoadServices(p.Abs(p.ServicesDir))
+	if err != nil {
+		return nil, err
+	}
+	cases, err := loadCases(p, args)
+	if err != nil {
+		return nil, err
+	}
+	reg := steps.Registry()
+	if n := lintAll(out, cases, services, reg); n > 0 {
+		return nil, exitErr{2, fmt.Sprintf("run: %d lint error(s); nothing was run", n)}
+	}
+	return &runSetup{p: p, st: st, services: services, cases: cases,
+		r: &orchestrator.Runner{Project: p, Registry: reg, Services: services, Out: out}}, nil
+}
+
+// start brings what the given cases need to a ready state and wires the runner.
+func (s *runSetup) start(cmd *cobra.Command, g *globals, cases []*scenario.Case, build, noObs bool) error {
+	out, ctx := cmd.OutOrStdout(), cmd.Context()
+	// Infrastructure the cases need must be up and healthy.
+	needSvc := map[string]*config.Service{}
+	for _, c := range cases {
+		needSvc[c.Service] = s.services[c.Service]
+	}
+	var need []string
+	for _, svc := range needSvc {
+		need = append(need, svc.Stores.Names()...)
+		need = append(need, svc.MockComponents()...)
+		if err := s.st.EnsureServiceImages(ctx, svc, build); err != nil {
+			return err
+		}
+	}
+	for _, c := range cases {
+		if len(c.Chaos.Proxies) > 0 {
+			need = append(need, "toxiproxy")
+		}
+	}
+	if err := s.st.RequireHealthy(ctx, dedupeStrings(need)); err != nil {
+		return err
+	}
+	caps, ok := s.st.LoadCapabilities()
+	if !ok {
+		caps = s.st.Doctor(ctx).Capabilities
+	}
+	s.r.Caps = map[string]bool{"docker.sock": caps.DockerSock, "NET_ADMIN": caps.NetAdmin, "netem": caps.Netem}
+	if !noObs {
+		if run, _ := s.st.Running(ctx); strings.HasPrefix(run["grafana"], "Up") && strings.HasPrefix(run["prometheus"], "Up") {
+			obs := &grafana.Observer{C: collector(s.p)}
+			if err := obs.Available(ctx); err == nil {
+				s.r.Obs = obs
+			} else {
+				fmt.Fprintf(out, "WARN observability not reachable: %v\n", err)
+			}
+		}
+	}
+	s.r.Baselines, s.r.Fingerprint, s.r.Commit = baselineStore(ctx, s.p, s.st)
+	s.r.RecordBaseline, s.r.BaselineRuns = g.recordBaseline, g.baselineRuns
+	return nil
+}
+
+// finish writes the report files and seals the bundle.
+func (s *runSetup) finish(ctx context.Context, run *result.Run, dir *evidence.Dir) error {
+	man := buildManifest(ctx, s.p, s.st, run, s.services)
+	if err := report.WriteAll(dir, run, man); err != nil {
+		return err
+	}
+	man.FinishedAt = time.Now().UTC()
+	return dir.Seal(man)
+}
+
 func newRunCmd(g *globals) *cobra.Command {
 	var opt orchestrator.Options
 	var noObs, build bool
@@ -289,78 +375,23 @@ func newRunCmd(g *globals) *cobra.Command {
 		Use:   "run [case.yaml|dir]...",
 		Short: "Run test cases and write the evidence bundle (report.html, junit.xml, traceability.csv, manifest.json)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			out := cmd.OutOrStdout()
-			p, st, err := g.stack(out)
+			s, err := prepareRun(cmd, g, args)
 			if err != nil {
 				return err
 			}
-			services, err := config.LoadServices(p.Abs(p.ServicesDir))
-			if err != nil {
+			if err := s.start(cmd, g, s.cases, build, noObs); err != nil {
 				return err
 			}
-			cases, err := loadCases(p, args)
-			if err != nil {
-				return err
-			}
-			reg := steps.Registry()
-			if n := lintAll(out, cases, services, reg); n > 0 {
-				return exitErr{2, fmt.Sprintf("run: %d lint error(s); nothing was run", n)}
-			}
-			ctx := cmd.Context()
-			// Infrastructure the cases need must be up and healthy.
-			needSvc := map[string]*config.Service{}
-			for _, c := range cases {
-				needSvc[c.Service] = services[c.Service]
-			}
-			var need []string
-			for _, s := range needSvc {
-				need = append(need, s.Stores.Names()...)
-				need = append(need, s.MockComponents()...)
-				if err := st.EnsureServiceImages(ctx, s, build); err != nil {
-					return err
-				}
-			}
-			for _, c := range cases {
-				if len(c.Chaos.Proxies) > 0 {
-					need = append(need, "toxiproxy")
-				}
-			}
-			if err := st.RequireHealthy(ctx, dedupeStrings(need)); err != nil {
-				return err
-			}
-			caps, ok := st.LoadCapabilities()
-			if !ok {
-				caps = st.Doctor(ctx).Capabilities
-			}
-			r := &orchestrator.Runner{Project: p, Registry: reg, Services: services, Out: out,
-				Caps: map[string]bool{"docker.sock": caps.DockerSock, "NET_ADMIN": caps.NetAdmin, "netem": caps.Netem}}
-			if !noObs {
-				if run, _ := st.Running(ctx); strings.HasPrefix(run["grafana"], "Up") && strings.HasPrefix(run["prometheus"], "Up") {
-					obs := &grafana.Observer{C: collector(p)}
-					if err := obs.Available(ctx); err == nil {
-						r.Obs = obs
-					} else {
-						fmt.Fprintf(out, "WARN observability not reachable: %v\n", err)
-					}
-				}
-			}
-			r.Baselines, r.Fingerprint, r.Commit = baselineStore(ctx, p, st)
-			r.RecordBaseline, r.BaselineRuns = g.recordBaseline, g.baselineRuns
 			opt.Command = os.Args
 			started := time.Now()
-			run, dir, err := r.Run(ctx, cases, opt)
+			run, dir, err := s.r.Run(cmd.Context(), s.cases, opt)
 			if err != nil {
 				return err
 			}
-			man := buildManifest(ctx, p, st, run, services)
-			if err := report.WriteAll(dir, run, man); err != nil {
+			if err := s.finish(cmd.Context(), run, dir); err != nil {
 				return err
 			}
-			man.FinishedAt = time.Now().UTC()
-			if err := dir.Seal(man); err != nil {
-				return err
-			}
-			return printSummary(out, run, dir, time.Since(started))
+			return printSummary(cmd.OutOrStdout(), run, dir, time.Since(started))
 		},
 	}
 	cmd.Flags().StringVar(&opt.RunID, "run-id", "", "run id (default: generated)")
@@ -397,7 +428,10 @@ func printSummary(w io.Writer, run *result.Run, dir *evidence.Dir, d time.Durati
 		killed := ""
 		for _, m := range ex.Mutations {
 			mark := "killed"
-			if !m.Killed {
+			switch {
+			case m.Result == result.Error:
+				mark = "NOT EVALUATED"
+			case !m.Killed:
 				mark = "SURVIVED"
 			}
 			killed += fmt.Sprintf(" [%s %s]", m.ID, mark)

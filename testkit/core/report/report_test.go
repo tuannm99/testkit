@@ -97,3 +97,19 @@ func TestHTMLPerfAndChaosSections(t *testing.T) {
 		}
 	}
 }
+
+func TestHTMLAdmission(t *testing.T) {
+	r := sampleRun()
+	r.Admission = []*result.Admission{{CaseID: "TC-A-1", File: "scenarios/a.yaml", Status: result.Rejected, Rules: []result.Rule{
+		{Name: "green-and-stable", OK: true, Detail: "TC-A-1[kafka] passed 2/2 times"},
+		{Name: "mutations-killed", OK: false, Detail: "M1[kafka] SURVIVED", Evidence: []string{"TC-A-1/mutations/M1-kafka/case.json"}}}}}
+	var b bytes.Buffer
+	if err := HTML(&b, &evidence.Dir{Root: t.TempDir()}, r, &evidence.Manifest{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Kiểm duyệt testcase", "không đạt", "xanh ổn định", "đỏ khi có lỗi", "M1[kafka] SURVIVED", "M1-kafka/case.json"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("report misses %q", want)
+		}
+	}
+}
