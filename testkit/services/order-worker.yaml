@@ -36,6 +36,14 @@ stores:
   elasticsearch:
     indices:
       orders: { mappings: ../../reference-worker/es/orders.json }
+      order-history: { mappings: ../../reference-worker/es/order-history.json }
+  clickhouse:
+    migrations: ../../reference-worker/migrations/clickhouse
+    snapshot: [order_events]
+  mongo:
+    snapshot: [audit]
+  redis:
+    snapshot: true
 
 mocks:
   payment:
@@ -51,9 +59,13 @@ mocks:
     verified_at: "2026-10-01"
     secret: test-only-webhook-secret     # throw-away value, also given to the service
     description: Payment provider calling back the service (refund events)
+  partner:
+    kind: socket
+    protocol: ws
+    description: Partner receiving order notifications over WebSocket (acks by id, heartbeat ping/pong)
   mail:
     kind: smtp
-    description: Customer notification mail (captured by Mailpit)
+    description: Customer notification mail (Mock Hub SMTP with fault injection, relayed to Mailpit)
 
 triggers:
   kafka:
@@ -70,6 +82,12 @@ entities:
   order:
     postgres: { table: orders, key: id }
     elasticsearch: { table: orders, key: _id }
+  order_history:
+    elasticsearch: { table: order-history, key: _id }
+  order_event:
+    clickhouse: { table: order_events, key: event_id }
+  audit:
+    mongo: { table: audit, key: _id }
   job:
     postgres: { table: jobs, key: job_key }
   payment_event:
@@ -85,6 +103,11 @@ failpoints:
   es_ignore_bulk_errors: _bulk item errors (HTTP 200, errors=true) are ignored
   use_worker_clock: job due time compared with the worker clock instead of the DB clock
   poll_busy_loop: the poller does not back off when the job table is empty
+  ch_no_dedup_token: ClickHouse inserts without insert_deduplication_token (retries duplicate rows)
+  mongo_dup_is_error: Mongo duplicate key (E11000, already recorded) is treated as a failure
+  skip_cache_invalidate: the Redis status cache is not refreshed when a refund arrives
+  ws_no_resend: unacked notifications are not resent after a reconnect
+  ws_no_heartbeat: a silent (half-open) WebSocket connection is never detected
 
 env:
   SERVICE_NAME: order-worker
@@ -101,10 +124,33 @@ env:
   PAYMENT_MAX_BACKOFF: 5s
   ES_URL: "{{ es }}"
   ES_INDEX: '{{ index "orders" }}'
-  SMTP_ADDR: "{{ smtp }}"
+  SMTP_ADDR: "{{ smtpmock }}"
+  MAIL_FROM: "orders+{{ .NS }}@shop.test"       # the Mock Hub SMTP server reads the namespace from it
+  ES_HISTORY_INDEX: '{{ index "order-history" }}'
+  CH_URL: "{{ ch }}"
+  CH_DATABASE: "{{ database }}"
+  CH_USER: "{{ chuser }}"
+  CH_PASSWORD: "{{ chpass }}"
+  MONGO_URI: "{{ mongo }}"
+  MONGO_DB: "{{ database }}"
+  REDIS_ADDR: "{{ redis }}"
+  REDIS_PREFIX: "{{ keyprefix }}"
+  PARTNER_WS_URL: '{{ mocksocket "partner" }}'
+  WS_HEARTBEAT: 500ms
   POLL_LEASE: 6s
   ORDER_LEASE: 10s
   WEBHOOK_SECRET: '{{ mocksecret "psp" }}'
+
+# Cross-store consistency checked by `reconcile.<name>.*` and written as evidence.
+reconcile:
+  paid_orders:
+    description: Every paid order exists once in Postgres, the search index, the history index, analytics and the audit log
+    sources:
+      - { store: postgres, sql: "SELECT id FROM orders WHERE status IN ('paid', 'refunded')" }
+      - { store: elasticsearch, index: orders, field: order_id }
+      - { store: elasticsearch, index: order-history, term: { status: paid }, field: order_id }
+      - { store: clickhouse, sql: "SELECT order_id FROM order_events WHERE type = 'order.paid'" }
+      - { store: mongo, collection: audit, filter: { type: order.paid }, field: order_id }
 
 # Evidence panels: name -> Grafana panel. Raw data is fetched with the panel's
 # own queries (variables interpolated), so image and numbers always match.

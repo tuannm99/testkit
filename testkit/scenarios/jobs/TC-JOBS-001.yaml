@@ -35,6 +35,7 @@ expect:
   - { id: A4, check: postgres.job.count(status=done), eq: 30, why: "Mọi job ở trạng thái done" }
   - { id: A5, check: sut.metric(worker_poll_claimed_total), eq: 30, why: "Tổng số lần claim của 3 worker = 30: không job nào bị claim hai lần" }
   - { id: A6, check: sut.metric(worker_poll_rescued_total), eq: 0, why: "Không job nào phải cứu do hết lease" }
+  - { id: A7, check: reconcile.paid_orders.mismatches, eq: 0, why: "30 đơn có mặt đúng một lần ở Postgres, ES, ClickHouse và Mongo" }
 evidence:
   grafana: [jobs_total, poller, payment_calls_total]
 within: 60s

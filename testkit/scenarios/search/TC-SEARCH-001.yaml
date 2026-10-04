@@ -1,0 +1,49 @@
+id: TC-SEARCH-001
+title: ES _bulk trả 200 nhưng lỗi một phần — worker phát hiện, retry, không nhân bản dữ liệu ở ClickHouse/Mongo
+requirement: [REQ-260, REQ-261]
+risk: P0
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Elasticsearch trả HTTP 200 cho _bulk nhưng một item lỗi (index lịch sử đang bị chặn ghi). Worker phải
+  coi đó là lỗi và xử lý lại job; khi xử lý lại, các bước đã làm trước đó (sự kiện ClickHouse, audit Mongo)
+  không được nhân bản. Sau cùng mọi kho phải khớp nhau (reconcile).
+preconditions:
+  - Index order-history của namespace bị chặn ghi (index.blocks.write=true) trước khi job chạy
+  - Index orders vẫn ghi được, nên cùng một _bulk có 1 item thành công và 1 item lỗi
+vars:
+  customer: "cust-s1+{{ .ns }}@shop.test"
+input:
+  order: { id: s1, customer_email: "{{ .vars.customer }}", amount_cents: 1200, currency: USD, status: pending }
+  job: { id: s1 }
+trigger: [kafka, db-poll]
+given:
+  postgres.order: ["{{ .input.order }}"]
+  mock.payment: [201]
+steps:
+  - step: es.block_writes
+    name: chặn ghi index lịch sử
+    with: { index: order-history, enabled: true }
+  - step: trigger.enqueue
+    with: { from: "{{ .input.job }}" }
+  - step: wait.until
+    name: _bulk đầu tiên đã chạy (item orders thành công, item history lỗi)
+    with: { check: es.order.s1.status, eq: paid, within: 20s }
+  - step: es.block_writes
+    name: gỡ chặn ghi
+    with: { index: order-history, enabled: false }
+expect:
+  - { id: A1, check: es.order_history.count(order_id=s1), eq: 1, why: "Item bị lỗi trong _bulk (HTTP 200, errors=true) được ghi lại khi xử lý lại" }
+  - { id: A2, check: reconcile.paid_orders.mismatches, eq: 0, why: "Postgres, 2 index ES, ClickHouse, Mongo cùng chứa đúng một đơn s1" }
+  - { id: A3, check: clickhouse.order_event.count(order_id=s1), eq: 1, why: "Retry không tạo dòng analytics trùng (insert_deduplication_token)" }
+  - { id: A4, check: clickhouse.order_event.duplicates, eq: 0, why: "Không có event_id nào lặp trong ClickHouse" }
+  - { id: A5, check: mongo.audit.count(order_id=s1), eq: 1, why: "Audit không trùng: E11000 khi retry được hiểu là đã ghi" }
+  - { id: A6, check: mail.to(customer).count, eq: 1, why: "Khách nhận đúng một mail dù job xử lý nhiều lần" }
+  - { id: A7, check: mock.payment.succeeded, eq: 1, why: "Không trừ tiền lại khi retry" }
+evidence:
+  grafana: [jobs_total, side_effects_total]
+within: 30s
+mutations:
+  - { id: M1, failpoint: es_ignore_bulk_errors, title: "Bỏ qua lỗi từng item của _bulk (chỉ nhìn HTTP 200)", expect_red: [A1, A2] }
+  - { id: M2, failpoint: ch_no_dedup_token, title: "Insert ClickHouse không có deduplication token", expect_red: [A3, A4] }
