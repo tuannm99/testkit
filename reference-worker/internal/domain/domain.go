@@ -49,7 +49,23 @@ var (
 	// ErrBusy means another worker is processing the same order right now.
 	ErrBusy     = errors.New("order is being processed by another worker")
 	ErrNotFound = errors.New("not found")
+	// ErrUnavailable: a dependency the worker cannot work without (its
+	// database) is unreachable. Retrying later is the only option and the
+	// job itself is not at fault, so it must not consume attempts nor be
+	// dead-lettered.
+	ErrUnavailable = errors.New("dependency unavailable")
 )
+
+// Unavailable marks err as an infrastructure outage.
+func Unavailable(err error) error { return &unavailableErr{err} }
+
+type unavailableErr struct{ err error }
+
+func (u *unavailableErr) Error() string   { return "unavailable: " + u.err.Error() }
+func (u *unavailableErr) Unwrap() []error { return []error{u.err, ErrUnavailable} }
+
+// IsUnavailable reports whether err is an infrastructure outage.
+func IsUnavailable(err error) bool { return errors.Is(err, ErrUnavailable) }
 
 // Permanent marks err as non-retryable.
 func Permanent(err error) error { return &permanentErr{err} }

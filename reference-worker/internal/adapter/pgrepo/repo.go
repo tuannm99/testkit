@@ -9,11 +9,31 @@ import (
 	"fmt"
 	"time"
 
+	"io"
+	"net"
+	"strings"
+
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tuannm99/testkit/reference-worker/internal/domain"
 )
+
+// classify marks connectivity failures (connect refused/reset, broken
+// connection) as domain.ErrUnavailable; query errors stay as they are.
+func classify(err error) error {
+	if err == nil || errors.Is(err, pgx.ErrNoRows) || domain.IsUnavailable(err) {
+		return err
+	}
+	var ce *pgconn.ConnectError
+	var ne net.Error
+	if errors.As(err, &ce) || errors.As(err, &ne) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) ||
+		pgconn.SafeToRetry(err) || strings.Contains(err.Error(), "failed to connect") || strings.Contains(err.Error(), "conn closed") {
+		return domain.Unavailable(err)
+	}
+	return err
+}
 
 type Repo struct {
 	Pool        *pgxpool.Pool
@@ -40,7 +60,7 @@ func (r *Repo) Get(ctx context.Context, id string) (domain.Order, error) {
 	if ref != nil {
 		o.PaymentRef = *ref
 	}
-	return o, err
+	return o, classify(err)
 }
 
 // Claim moves the order to processing for owner until the lease expires.
@@ -52,7 +72,7 @@ func (r *Repo) Claim(ctx context.Context, id, owner string, lease time.Duration)
 		WHERE id = $1 AND (status = 'pending' OR (status = 'processing' AND (processing_until < now() OR processing_by = $2)))`,
 		id, owner, lease.String())
 	if err != nil {
-		return domain.Order{}, false, err
+		return domain.Order{}, false, classify(err)
 	}
 	o, err := r.Get(ctx, id)
 	if err != nil {
@@ -85,13 +105,13 @@ func (r *Repo) MarkFailed(ctx context.Context, id, owner, reason string) error {
 func (r *Repo) MarkPaid(ctx context.Context, o domain.Order, owner, chargeID string) error {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
-		return err
+		return classify(err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	tag, err := tx.Exec(ctx, `UPDATE orders SET status = 'paid', payment_ref = $3, processing_by = NULL, processing_until = NULL, updated_at = now()
 		WHERE id = $1 AND processing_by = $2 AND status = 'processing'`, o.ID, owner, chargeID)
 	if err != nil {
-		return err
+		return classify(err)
 	}
 	if tag.RowsAffected() != 1 {
 		return fmt.Errorf("order %s: claim lost before commit: %w", o.ID, domain.ErrBusy)
@@ -101,16 +121,16 @@ func (r *Repo) MarkPaid(ctx context.Context, o domain.Order, owner, chargeID str
 			"amount_cents": o.AmountCents, "currency": o.Currency})
 		if _, err := tx.Exec(ctx, `INSERT INTO outbox (event_id, topic, key, payload) VALUES ($1, $2, $3, $4)`,
 			"order.paid:"+o.ID, r.OutboxTopic, o.ID, payload); err != nil {
-			return err
+			return classify(err)
 		}
 	}
-	return tx.Commit(ctx)
+	return classify(tx.Commit(ctx))
 }
 
 // ClaimMail sets mail_sent_at once; only the caller that wins sends the mail.
 func (r *Repo) ClaimMail(ctx context.Context, id string) (bool, error) {
 	tag, err := r.Pool.Exec(ctx, `UPDATE orders SET mail_sent_at = now() WHERE id = $1 AND mail_sent_at IS NULL`, id)
-	return tag.RowsAffected() == 1, err
+	return tag.RowsAffected() == 1, classify(err)
 }
 
 // UnclaimMail reverts ClaimMail when sending failed.

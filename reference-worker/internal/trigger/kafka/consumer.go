@@ -111,6 +111,7 @@ func (c *Consumer) handle(procCtx, stopCtx context.Context, r *kgo.Record) error
 	if err := json.Unmarshal(r.Value, &m); err != nil || m.OrderID == "" {
 		return c.deadLetter(procCtx, r, fmt.Errorf("poison message: %v", err), 0)
 	}
+	outage := 500 * time.Millisecond
 	for attempt := 1; ; attempt++ {
 		err := c.Process(procCtx, domain.Job{ID: m.JobID, OrderID: m.OrderID, Source: "kafka", Attempt: attempt,
 			Delivery: fmt.Sprintf("%s/%d/%d", r.Topic, r.Partition, r.Offset)})
@@ -118,13 +119,21 @@ func (c *Consumer) handle(procCtx, stopCtx context.Context, r *kgo.Record) error
 			c.observeE2E(m)
 			return nil
 		}
-		if domain.IsPermanent(err) || attempt >= c.MaxAttempts {
+		unavailable := domain.IsUnavailable(err)
+		if !unavailable && (domain.IsPermanent(err) || attempt >= c.MaxAttempts) {
 			return c.deadLetter(procCtx, r, err, attempt)
 		}
 		wait := time.Duration(attempt) * 500 * time.Millisecond
-		if errors.Is(err, domain.ErrBusy) {
+		switch {
+		case errors.Is(err, domain.ErrBusy):
 			wait = time.Second
 			attempt-- // another worker holds the order: waiting is not a failed attempt
+		case unavailable:
+			// The database is down: not the job's fault. Wait (capped
+			// exponential backoff) without consuming attempts; the partition
+			// stays blocked so ordering is kept, nothing is dead-lettered.
+			wait, outage = outage, min(outage*2, 5*time.Second)
+			attempt--
 		}
 		c.Log.Warn("process failed, retrying", "order_id", m.OrderID, "attempt", attempt, "err", err.Error())
 		if err := c.Clock.Sleep(stopCtx, wait); err != nil {
