@@ -88,3 +88,17 @@ func (c *Client) SendWebhook(ctx context.Context, ns string, req WebhookRequest)
 func (c *Client) Reset(ctx context.Context, ns string) error {
 	return c.do(ctx, http.MethodDelete, "/_mock/ns/"+ns, nil, nil)
 }
+
+// ScriptSMTP sets the SMTP behaviours of a namespace (one per session).
+func (c *Client) ScriptSMTP(ctx context.Context, ns string, behaviours []string) error {
+	return c.do(ctx, http.MethodPut, "/_mock/ns/"+ns+"/smtp/script", map[string]any{"behaviours": behaviours}, nil)
+}
+
+// ConfigureSocket configures a WebSocket/TCP partner; TCP mocks get a port.
+func (c *Client) ConfigureSocket(ctx context.Context, ns, mock string, cfg any) (int, error) {
+	var out struct {
+		Port int `json:"port"`
+	}
+	err := c.do(ctx, http.MethodPut, "/_mock/ns/"+ns+"/sockets/"+mock, cfg, &out)
+	return out.Port, err
+}

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	httpmock "github.com/tuannm99/testkit/testkit/adapters/mock/http"
 	"github.com/tuannm99/testkit/testkit/core/kit"
 )
 
@@ -28,10 +29,11 @@ func New() kit.Connector { return &Connector{http: &http.Client{Timeout: 15 * ti
 func (c *Connector) Name() string            { return "mail" }
 func (c *Connector) CheckPrefixes() []string { return []string{"mail"} }
 
-func (c *Connector) Provision(_ context.Context, env *kit.Env) error {
+func (c *Connector) Provision(ctx context.Context, env *kit.Env) error {
 	c.env = env
 	c.base = env.Runner.Mailpit
-	return nil
+	// Every session of this namespace is accepted unless a scenario scripts faults.
+	return httpmock.NewClient(env.Runner.Mockhub).ScriptSMTP(ctx, string(env.NS), []string{"ok"})
 }
 
 func (c *Connector) Health(ctx context.Context) error {
@@ -108,8 +110,20 @@ func (c *Connector) to(ctx context.Context, addr string) ([]Summary, error) {
 	return out, nil
 }
 
-func (c *Connector) Apply(context.Context, kit.Step) (kit.Result, error) {
-	return kit.Result{}, fmt.Errorf("mail has no steps")
+// Apply: mail.script {behaviours: [451@data, disconnect@data, ok, ...]} —
+// one behaviour per SMTP session of this namespace, the last one repeats.
+func (c *Connector) Apply(ctx context.Context, s kit.Step) (kit.Result, error) {
+	if s.Name != "mail.script" {
+		return kit.Result{}, fmt.Errorf("mail: unknown step %s", s.Name)
+	}
+	var list []string
+	if l, ok := s.With["behaviours"].([]any); ok {
+		for _, x := range l {
+			list = append(list, fmt.Sprint(x))
+		}
+	}
+	err := httpmock.NewClient(c.env.Runner.Mockhub).ScriptSMTP(ctx, string(c.env.NS), list)
+	return kit.Result{Note: "SMTP sessions: " + strings.Join(list, ", ")}, err
 }
 
 // Check resolves:
@@ -118,9 +132,21 @@ func (c *Connector) Apply(context.Context, kit.Step) (kit.Result, error) {
 //	mail.to(<address|var>).subject     subject of the latest one
 //	mail.to(<address|var>).text        text body of the latest one
 //	mail.namespace.count               all messages of this execution (recipient contains the namespace)
+//	mail.smtp.sessions                 SMTP sessions seen by the Mock Hub SMTP server
+//	mail.smtp.delivered                sessions that ended with the message accepted
 func (c *Connector) Check(ctx context.Context, ref kit.CheckRef) (kit.Observation, error) {
 	segs := ref.Segments
 	at := time.Now().UTC()
+	if segs[1].Name == "smtp" && len(segs) == 3 {
+		j, err := httpmock.NewClient(c.env.Runner.Mockhub).Journal(ctx, string(c.env.NS), "smtp")
+		n := 0
+		for _, e := range j {
+			if segs[2].Name == "sessions" || (segs[2].Name == "delivered" && e.Path == "delivered") {
+				n++
+			}
+		}
+		return kit.Observation{Value: n, Source: fmt.Sprintf("Mock Hub SMTP journal (%d sessions)", len(j)), At: time.Now().UTC()}, err
+	}
 	if segs[1].Name == "namespace" {
 		msgs, err := c.Search(ctx, "to:"+string(c.env.NS))
 		return kit.Observation{Value: len(msgs), Source: "Mailpit search to:" + string(c.env.NS), At: time.Now().UTC()}, err
