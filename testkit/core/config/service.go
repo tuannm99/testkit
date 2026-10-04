@@ -31,23 +31,24 @@ func (d Duration) D() time.Duration          { return time.Duration(d) }
 // Service describes one service under test. Adding a service to TestKit means
 // adding one of these files; no core code changes.
 type Service struct {
-	APIVersion  string                 `yaml:"apiVersion"`
-	Kind        string                 `yaml:"kind"`
-	Name        string                 `yaml:"name"`
-	Description string                 `yaml:"description"`
-	Owner       string                 `yaml:"owner"`
-	Image       ServiceImage           `yaml:"image"`
-	Ports       map[string]int         `yaml:"ports"`
-	Health      HealthSpec             `yaml:"health"`
-	Metrics     MetricsSpec            `yaml:"metrics"`
-	Stores      Stores                 `yaml:"stores"`
-	Mocks       map[string]MockSpec    `yaml:"mocks"`
-	Triggers    map[string]TriggerSpec `yaml:"triggers"`
-	Entities    map[string]Entity      `yaml:"entities"`
-	Env         map[string]string      `yaml:"env"`
-	Failpoints  map[string]string      `yaml:"failpoints"` // name -> what breaking it means
-	Panels      map[string]PanelSpec   `yaml:"panels"`
-	Requires    []string               `yaml:"requires"` // special privileges (docker.sock, NET_ADMIN)
+	APIVersion  string                   `yaml:"apiVersion"`
+	Kind        string                   `yaml:"kind"`
+	Name        string                   `yaml:"name"`
+	Description string                   `yaml:"description"`
+	Owner       string                   `yaml:"owner"`
+	Image       ServiceImage             `yaml:"image"`
+	Ports       map[string]int           `yaml:"ports"`
+	Health      HealthSpec               `yaml:"health"`
+	Metrics     MetricsSpec              `yaml:"metrics"`
+	Stores      Stores                   `yaml:"stores"`
+	Mocks       map[string]MockSpec      `yaml:"mocks"`
+	Triggers    map[string]TriggerSpec   `yaml:"triggers"`
+	Entities    map[string]Entity        `yaml:"entities"`
+	Env         map[string]string        `yaml:"env"`
+	Failpoints  map[string]string        `yaml:"failpoints"` // name -> what breaking it means
+	Panels      map[string]PanelSpec     `yaml:"panels"`
+	Requires    []string                 `yaml:"requires"` // special privileges (docker.sock, NET_ADMIN)
+	Reconcile   map[string]ReconcileSpec `yaml:"reconcile"`
 
 	File string `yaml:"-"` // absolute path of the descriptor
 	Dir  string `yaml:"-"`
@@ -186,6 +187,24 @@ type EntityTable struct {
 	Key   string `yaml:"key"`
 }
 
+// ReconcileSpec compares the same set of ids across stores after a run
+// (counts, duplicates, missing/extra ids, hash of the sorted id set).
+type ReconcileSpec struct {
+	Description string            `yaml:"description"`
+	Sources     []ReconcileSource `yaml:"sources"`
+}
+
+// ReconcileSource extracts ids from one store.
+type ReconcileSource struct {
+	Store      string         `yaml:"store"`      // postgres | elasticsearch | clickhouse | mongo
+	SQL        string         `yaml:"sql"`        // postgres, clickhouse: first column = id
+	Index      string         `yaml:"index"`      // elasticsearch (logical name)
+	Term       map[string]any `yaml:"term"`       // elasticsearch term filters
+	Collection string         `yaml:"collection"` // mongo
+	Filter     map[string]any `yaml:"filter"`     // mongo equality filter
+	Field      string         `yaml:"field"`      // es / mongo: field holding the id
+}
+
 // PanelSpec binds an evidence name to a Grafana panel and the raw PromQL that
 // backs it (raw data is the primary evidence, the image is a convenience).
 type PanelSpec struct {
@@ -277,6 +296,29 @@ func (s *Service) Validate() error {
 			}
 		default:
 			add("unknown trigger %q (kafka | db-poll)", name)
+		}
+	}
+	for name, r := range s.Reconcile {
+		if len(r.Sources) < 2 {
+			add("reconcile.%s needs at least two sources", name)
+		}
+		for i, src := range r.Sources {
+			switch src.Store {
+			case "postgres", "clickhouse":
+				if src.SQL == "" {
+					add("reconcile.%s.sources[%d]: sql is required for %s", name, i, src.Store)
+				}
+			case "elasticsearch":
+				if src.Index == "" || src.Field == "" {
+					add("reconcile.%s.sources[%d]: index and field are required", name, i)
+				}
+			case "mongo":
+				if src.Collection == "" || src.Field == "" {
+					add("reconcile.%s.sources[%d]: collection and field are required", name, i)
+				}
+			default:
+				add("reconcile.%s.sources[%d]: unknown store %q", name, i, src.Store)
+			}
 		}
 	}
 	if pg := s.Stores.Postgres; pg != nil && pg.Migrations != "" {

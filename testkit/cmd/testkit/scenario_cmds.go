@@ -216,6 +216,18 @@ func planCase(w io.Writer, p *config.Project, svc *config.Service, reg *kit.Regi
 		sort.Strings(is)
 		fmt.Fprintf(w, "  elasticsearch  indices %s (replicas 0)\n", strings.Join(is, ", "))
 	}
+	if ch := svc.Stores.ClickHouse; ch != nil {
+		fmt.Fprintf(w, "  clickhouse     CREATE DATABASE %s; migrations %s\n", ns.Database(), ch.Migrations)
+	}
+	if svc.Stores.Mongo != nil {
+		fmt.Fprintf(w, "  mongo          database %s (dropped at teardown)\n", ns.Database())
+	}
+	if svc.Stores.Redis != nil {
+		fmt.Fprintf(w, "  redis          key prefix %q (deleted at teardown)\n", ns.KeyPrefix())
+	}
+	for _, name := range config.SortedKeys(svc.Reconcile) {
+		fmt.Fprintf(w, "  reconcile      %s across %d store(s)\n", name, len(svc.Reconcile[name].Sources))
+	}
 	for _, name := range config.SortedKeys(svc.Mocks) {
 		m := svc.Mocks[name]
 		fmt.Fprintf(w, "  mock           %s (%s) api %s verified %s %s\n", name, m.Kind, m.APIVersion, m.VerifiedAt, m.OpenAPI)

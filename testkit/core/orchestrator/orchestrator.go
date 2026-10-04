@@ -854,6 +854,9 @@ func (r *Runner) connectorNames(svc *config.Service, trigger string) []string {
 	if kinds["socket"] {
 		names = append(names, "socket")
 	}
+	if len(svc.Reconcile) > 0 {
+		names = append(names, "reconcile")
+	}
 	if trigger != "" {
 		names = append(names, "trigger:"+trigger)
 	}

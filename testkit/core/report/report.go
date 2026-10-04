@@ -355,7 +355,7 @@ var funcs = template.FuncMap{
 		}
 		return string(b)
 	},
-	"join":     strings.Join,
+	"join": strings.Join,
 	"t": func(t time.Time) string {
 		if t.IsZero() {
 			return ""

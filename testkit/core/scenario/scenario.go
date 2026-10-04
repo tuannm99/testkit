@@ -367,9 +367,13 @@ func expandGiven(g GivenEntry) ([]StepSpec, int, error) {
 		}
 		return []StepSpec{{Step: "mock.script", With: map[string]any{"mock": rest, "responses": responses}, Line: g.Line}}, 50, nil
 	case (src == "postgres" || src == "mongo" || src == "es" || src == "clickhouse" || src == "redis") && rest != "":
-		rows, ok := g.Value.([]any)
-		if !ok {
-			rows = []any{g.Value}
+		var rows any = g.Value
+		switch v := g.Value.(type) {
+		case []any:
+		case string:
+			// a template such as "{{ .input.orders }}" resolving to a list
+		default:
+			rows = []any{v}
 		}
 		return []StepSpec{{Step: src + ".insert", With: map[string]any{"entity": rest, "rows": rows}, Line: g.Line}}, 10, nil
 	}

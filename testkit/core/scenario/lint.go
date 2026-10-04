@@ -252,6 +252,8 @@ func serviceHas(svc *config.Service, connector string) bool {
 			}
 		}
 		return false
+	case "reconcile":
+		return len(svc.Reconcile) > 0
 	}
 	return true // sut, chaos, trigger, prom, ...: always available (capabilities checked at run time)
 }
@@ -285,9 +287,17 @@ func checkSupported(ref kit.CheckRef, svc *config.Service, reg *kit.Registry) st
 		if _, ok := svc.Mocks[ref.Segments[1].Name]; !ok {
 			return fmt.Sprintf("mock %q is not declared by service %s", ref.Segments[1].Name, svc.Name)
 		}
+	case "reconcile":
+		if _, ok := svc.Reconcile[ref.Segments[1].Name]; !ok {
+			return fmt.Sprintf("reconcile %q is not declared by service %s", ref.Segments[1].Name, svc.Name)
+		}
+	case "socket":
+		if m, ok := svc.Mocks[ref.Segments[1].Name]; !ok || m.Kind != "socket" {
+			return fmt.Sprintf("socket mock %q is not declared by service %s", ref.Segments[1].Name, svc.Name)
+		}
 	case "postgres", "es", "clickhouse", "mongo":
 		name := ref.Segments[1].Name
-		if name == "sql" || name == "query" || name == "index" || name == "table" || name == "collection" {
+		if name == "parts" {
 			return ""
 		}
 		e, ok := svc.Entities[name]

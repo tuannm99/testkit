@@ -55,6 +55,7 @@ func Funcs(env *kit.Env) template.FuncMap {
 		"keyprefix": ns.KeyPrefix,
 		"mock":      func(name string) string { return httpmock.DataURL(in.Mockhub, string(ns), name) },
 		"smtp":      func() string { return in.MailpitSMTP },
+		"smtpmock":  func() string { return in.MockhubSMTP },
 		"es":        func() string { return in.Elasticsearch },
 		"ch":        func() string { return in.ClickHouse },
 		"chuser":    func() string { return in.CHUser },
