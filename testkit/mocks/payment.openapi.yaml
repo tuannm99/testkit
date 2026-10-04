@@ -1,0 +1,43 @@
+# Contract of the (fictional) payment gateway used by the reference worker.
+# Mock provenance (api_version / verified_at) is declared in the service descriptor.
+openapi: 3.0.3
+info:
+  title: Payment Gateway
+  version: "2024-06-01"
+paths:
+  /v1/charges:
+    post:
+      operationId: createCharge
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [order_id, amount, currency]
+              properties:
+                order_id: { type: string, minLength: 1 }
+                amount: { type: integer, minimum: 1 }
+                currency: { type: string, enum: [USD, EUR, VND] }
+      responses:
+        "201":
+          description: charge created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status]
+                properties:
+                  id: { type: string }
+                  status: { type: string, enum: [succeeded, failed] }
+              example: { id: "ch_${req.body.order_id}", status: succeeded }
+        "429":
+          description: rate limited
+        "500":
+          description: gateway error
