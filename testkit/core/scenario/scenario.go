@@ -28,6 +28,7 @@ type Case struct {
 	Risk          string         `yaml:"risk"`
 	Status        string         `yaml:"status"` // draft | approved
 	Owner         string         `yaml:"owner"`
+	QCKey         string         `yaml:"qc_key"` // test case key in the QC tool (Zephyr Scale: ORD-T12)
 	Service       string         `yaml:"service"`
 	Purpose       string         `yaml:"purpose"`
 	Preconditions []string       `yaml:"preconditions"`
@@ -256,12 +257,30 @@ func LoadDir(dir string) ([]*Case, error) {
 	return out, err
 }
 
+// IsSuite reports whether a YAML file is a suite (kind: Suite).
+func IsSuite(p string) bool { return isSuite(p) }
+
 func isSuite(p string) bool {
 	raw, err := os.ReadFile(p)
 	if err != nil {
 		return false
 	}
 	return regexp.MustCompile(`(?m)^kind:\s*Suite\s*$`).Match(raw)
+}
+
+// UsesUI reports whether the case runs or checks UI tests (ui.*).
+func (c *Case) UsesUI() bool {
+	for _, s := range c.Steps {
+		if strings.HasPrefix(s.Step, "ui.") {
+			return true
+		}
+	}
+	for _, e := range c.Expect {
+		if strings.HasPrefix(e.Check, "ui.") {
+			return true
+		}
+	}
+	return false
 }
 
 // WithinDuration returns the assertion deadline (default 30s).

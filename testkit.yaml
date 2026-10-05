@@ -32,3 +32,14 @@ images:                              # images TestKit builds itself (pinned by T
     context: testkit
     dockerfile: testkit/Dockerfile
     target: toxiproxy
+  ui-runner:                         # Playwright + the UI tests of ui-tests/ (step ui.run)
+    context: ui-tests
+    dockerfile: ui-tests/Dockerfile
+qc:                                  # test management tool (Jira + Zephyr Scale test cycles)
+  tool: zephyr-scale
+  project_key: ORD                   # TODO: real Jira project key
+  api: https://api.zephyrscale.smartbear.com/v2   # Zephyr Scale Cloud API
+  token_env: ZEPHYR_TOKEN            # token read from this env var at push time, never written anywhere
+  cycle_name: "{{ .suite }} · {{ .run_id }}"
+  folder: /TestKit
+  auto_create_test_cases: false
