@@ -32,6 +32,16 @@ Running tests and reading the evidence:
 ./tk verify out/<run_id>                    # evidence bundle unchanged since the run (sha256 manifest)
 ```
 
+Release (what QC signs off — see `docs/huong-dan-qc.md`):
+
+```sh
+./tk run testkit/suites/release.yaml        # approved cases + mutations + retries → GO / NO-GO
+                                            # → out/<run_id>.zip (report, evidence, Zephyr Scale import files)
+./tk qc cases                               # out/qc/testcases.csv: create the test cases in Zephyr Scale
+ZEPHYR_TOKEN=... ./tk qc push out/<run_id>  # results → a new Zephyr Scale test cycle
+./tk pack out/<run_id>                      # re-pack: checks the manifest and that no secret is inside
+```
+
 With Go 1.24 installed you can use the CLI directly: `make build && ./bin/testkit doctor`.
 
 Behind a TLS-intercepting proxy, set `TESTKIT_BUILD_CA=/path/to/ca.pem` so image builds trust it.
@@ -48,9 +58,11 @@ testkit/                     Go module: CLI, Mock Hub, core, adapters, steps
   steps/       step and check vocabulary used by scenarios (`./tk steps`)
   scenarios/   test cases (YAML), one directory per area
   baselines/   perf baselines per environment fingerprint
+  suites/      release suites (kind: Suite) and their gate
   services/    one YAML per service under test
   mocks/       OpenAPI documents served to the Mock Hub
 reference-worker/            sample service (Kafka + DB-poll worker) proving the kit end to end
+ui-tests/                    Playwright (TypeScript) UI tests, run by the ui.run step in the pinned Playwright image
 docs/                        assumptions.md, phases/phase-N.md (what was done, how it was verified)
 ```
 
