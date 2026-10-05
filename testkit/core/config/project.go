@@ -30,6 +30,22 @@ type ImageBuild struct {
 	Args       map[string]string `yaml:"args"`
 }
 
+// AI configures the optional assistant (drafting, triage, summaries). It
+// never decides a result; only redacted text leaves the machine.
+type AI struct {
+	// none (default: prompts are written for manual use) | anthropic |
+	// openai-compatible (any model behind a /chat/completions endpoint) |
+	// command (an external program reads the prompt on stdin, answers on stdout)
+	Provider  string   `yaml:"provider"`
+	Model     string   `yaml:"model"`
+	BaseURL   string   `yaml:"base_url"`
+	APIKeyEnv string   `yaml:"api_key_env"` // env var holding the key (never the key itself)
+	Command   []string `yaml:"command"`
+	MaxTokens int      `yaml:"max_tokens"`
+	Effort    string   `yaml:"effort"`  // anthropic: low|medium|high|xhigh|max
+	Timeout   string   `yaml:"timeout"` // per request, default 5m
+}
+
 // QC describes the test management tool results are exported to.
 type QC struct {
 	Tool       string `yaml:"tool"`        // files (CSV + Markdown, default) | zephyr-scale; comma-separated for several
@@ -76,6 +92,7 @@ type Project struct {
 	OutDir       string                `yaml:"out_dir"`
 	Images       map[string]ImageBuild `yaml:"images"`
 	QC           *QC                   `yaml:"qc"`
+	AI           *AI                   `yaml:"ai"`
 
 	// fileEnv holds values read from EnvFiles; process env overrides them.
 	fileEnv map[string]string

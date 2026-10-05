@@ -102,6 +102,18 @@ details summary{cursor:pointer;color:var(--acc)}
 </table>
 {{end}}
 
+{{if or .AI .Summary}}
+<h2>Gợi ý của AI (tham khảo)</h2>
+<div class="note">Phần này do mô hình AI viết từ dữ liệu đã che (không gửi secret hay dữ liệu cá nhân). Nó <b>không</b> quyết định kết quả: pass/fail và cổng release ở trên do luật cứng của TestKit quyết định. Dữ liệu đã gửi và câu trả lời được lưu trong <a href="ai/requests/">ai/requests/</a>.</div>
+{{if .Summary}}<p>Tóm tắt cho người ký: <a href="ai/summary.md">ai/summary.md</a></p>{{end}}
+{{with .AI}}<p class="muted">Mô hình {{.Model}} ({{.Provider}}), prompt {{.PromptVersion}} · <a href="ai/triage.md">ai/triage.md</a></p>
+<table><tr><th>Execution</th><th>Phân loại theo luật</th><th>AI gợi ý</th><th>Nhận định</th><th>Bằng chứng AI trích</th><th>Việc nên làm</th></tr>
+{{range .Items}}<tr><td><a href="#{{anchor .Execution}}">{{.Execution}}</a></td><td>{{.RuleClass}}</td><td><span class="pill {{if .Agrees}}ok{{else}}err{{end}}">{{.Category}}</span> <span class="muted">{{.Confidence}}</span></td>
+<td>{{.Summary}}</td><td class="ev">{{range .Evidence}}<a href="{{.}}">{{base .}}</a><br>{{end}}</td><td>{{range .NextSteps}}• {{.}}<br>{{end}}</td></tr>{{end}}
+</table>
+{{if .Problems}}<p class="muted">Kiểm tra câu trả lời của AI: {{join .Problems "; "}}</p>{{end}}{{end}}
+{{end}}
+
 <h2>Ma trận truy vết (yêu cầu → testcase → kết quả)</h2>
 <table><tr><th>Yêu cầu</th><th>Testcase</th></tr>
 {{range .Matrix}}<tr><td>{{.Req}}</td><td>{{range .Execs}}<a href="#{{anchor .ID}}">{{.ID}}</a> <span class="pill {{cls .Result}}">{{.Result}}</span><br>{{end}}</td></tr>{{end}}

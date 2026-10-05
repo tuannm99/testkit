@@ -115,32 +115,36 @@ func newStepsCmd(g *globals) *cobra.Command {
 		Use:   "steps",
 		Short: "List the steps and checks a scenario may use",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			out := cmd.OutOrStdout()
-			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "STEP\tCONNECTOR\tPARAMS\tDESCRIPTION")
-			for _, d := range steps.Defs {
-				params := strings.Join(d.Required, ",")
-				if len(d.Optional) > 0 && d.Name != "assert" && d.Name != "wait.until" {
-					params += " [" + strings.Join(d.Optional, ",") + "]"
-				}
-				conn := d.Connector
-				if conn == "" {
-					conn = "(built-in)"
-				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", d.Name, conn, params, d.Doc)
-			}
-			tw.Flush()
-			fmt.Fprintln(out)
-			tw = tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "CHECK\tCONNECTOR\tEXAMPLES")
-			for _, c := range steps.Checks {
-				fmt.Fprintf(tw, "%s.*\t%s\t%s\n", c.Prefix, c.Connector, strings.Join(c.Examples, "  "))
-			}
-			tw.Flush()
-			fmt.Fprintf(out, "\noperators: %s\n", strings.Join(assert.Operators, ", "))
+			writeVocabulary(cmd.OutOrStdout())
 			return nil
 		},
 	}
+}
+
+// writeVocabulary lists the steps, checks and operators scenarios may use.
+func writeVocabulary(out io.Writer) {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "STEP\tCONNECTOR\tPARAMS\tDESCRIPTION")
+	for _, d := range steps.Defs {
+		params := strings.Join(d.Required, ",")
+		if len(d.Optional) > 0 && d.Name != "assert" && d.Name != "wait.until" {
+			params += " [" + strings.Join(d.Optional, ",") + "]"
+		}
+		conn := d.Connector
+		if conn == "" {
+			conn = "(built-in)"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", d.Name, conn, params, d.Doc)
+	}
+	tw.Flush()
+	fmt.Fprintln(out)
+	tw = tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "CHECK\tCONNECTOR\tEXAMPLES")
+	for _, c := range steps.Checks {
+		fmt.Fprintf(tw, "%s.*\t%s\t%s\n", c.Prefix, c.Connector, strings.Join(c.Examples, "  "))
+	}
+	tw.Flush()
+	fmt.Fprintf(out, "\noperators: %s\n", strings.Join(assert.Operators, ", "))
 }
 
 func newPlanCmd(g *globals) *cobra.Command {
@@ -232,7 +236,14 @@ func planCase(w io.Writer, p *config.Project, svc *config.Service, reg *kit.Regi
 	}
 	for _, name := range config.SortedKeys(svc.Mocks) {
 		m := svc.Mocks[name]
-		fmt.Fprintf(w, "  mock           %s (%s) api %s verified %s against %s %s\n", name, m.Kind, m.APIVersion, m.VerifiedAt, m.VerifiedAgainst, m.OpenAPI)
+		prov := ""
+		if m.APIVersion != "" {
+			prov = fmt.Sprintf(" api %s verified %s against %s", m.APIVersion, m.VerifiedAt, m.VerifiedAgainst)
+		}
+		if m.OpenAPI != "" {
+			prov += " " + m.OpenAPI
+		}
+		fmt.Fprintf(w, "  mock           %s (%s)%s\n", name, m.Kind, prov)
 	}
 	if trig != "" {
 		fmt.Fprintf(w, "  trigger        %s\n", trig)

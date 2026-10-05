@@ -35,6 +35,24 @@ var secretPatterns = []struct {
 // MinSecretLen is the shortest secret value the scan can look for reliably.
 const MinSecretLen = 8
 
+// ScanText reports secrets in a text (line numbers 1-based).
+func ScanText(text string, secrets map[string]string) []Finding {
+	var out []Finding
+	for n, line := range strings.Split(text, "\n") {
+		for name, v := range secrets {
+			if len(v) >= MinSecretLen && strings.Contains(line, v) {
+				out = append(out, Finding{Line: n + 1, What: "value of " + name})
+			}
+		}
+		for _, sp := range secretPatterns {
+			if sp.re.MatchString(line) {
+				out = append(out, Finding{Line: n + 1, What: sp.name})
+			}
+		}
+	}
+	return out
+}
+
 // ScanSecrets looks for known secret values (exact match, at least 8
 // characters) and credential patterns in every text file of the bundle.
 // Shorter values cannot be told apart from ordinary words: callers report them.

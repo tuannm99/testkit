@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tuannm99/testkit/testkit/core/ai"
 	"github.com/tuannm99/testkit/testkit/core/assert"
 	"github.com/tuannm99/testkit/testkit/core/evidence"
 	"github.com/tuannm99/testkit/testkit/core/result"
@@ -238,6 +239,8 @@ type htmlData struct {
 	Execs     []*execView
 	Matrix    []matrixRow
 	Generated string
+	AI        *ai.Triage // advisory, from ai/triage.json when present
+	Summary   bool       // ai/summary.md present
 }
 
 type execView struct {
@@ -265,6 +268,15 @@ type matrixRow struct {
 // HTML renders the report.
 func HTML(w io.Writer, dir *evidence.Dir, run *result.Run, man *evidence.Manifest) error {
 	d := htmlData{Run: run, Manifest: man, Counts: run.Counts(), Generated: time.Now().UTC().Format(time.RFC3339)}
+	if raw, err := os.ReadFile(dir.Path("ai", "triage.json")); err == nil {
+		var t ai.Triage
+		if json.Unmarshal(raw, &t) == nil {
+			d.AI = &t
+		}
+	}
+	if _, err := os.Stat(dir.Path("ai", "summary.md")); err == nil {
+		d.Summary = true
+	}
 	reqs := map[string][]*result.Execution{}
 	for _, ex := range run.Executions {
 		if ex.Mutation != "" {

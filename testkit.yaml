@@ -46,3 +46,14 @@ qc:                                  # handover to QC / test management
   cycle_name: "{{ .suite }} · {{ .run_id }}"
   folder: /TestKit
   auto_create_test_cases: false
+ai:                                  # optional assistant: drafts, triage, summaries — never decides a result
+  # none: nothing is sent; `testkit ai ...` writes the redacted prompt for use with any model (--response <file>).
+  # anthropic: Claude via the official SDK (key from $ANTHROPIC_API_KEY or the env var named in api_key_env).
+  # openai-compatible: any model behind <base_url>/chat/completions.  command: any CLI reading stdin (e.g. claude -p).
+  # Only redacted text leaves the machine; every request is recorded (redacted) under ai/requests/ or out/ai/.
+  provider: none
+  model: claude-opus-5-5             # anthropic default; set the model of your endpoint for openai-compatible
+  effort: high
+  # api_key_env: ANTHROPIC_API_KEY
+  # base_url: http://localhost:11434/v1
+  # command: [claude, -p]
