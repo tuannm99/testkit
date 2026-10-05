@@ -26,6 +26,7 @@ func New(addr string, pool *pgxpool.Pool, m *metrics.Metrics, webhook http.Handl
 		}
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.HandleFunc("GET /orders/{id}", orderHandler(pool))
 	mux.Handle("/metrics", promhttp.HandlerFor(m.Reg, promhttp.HandlerOpts{}))
 	return &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 }

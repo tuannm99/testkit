@@ -7,6 +7,7 @@ package steps
 import (
 	"github.com/tuannm99/testkit/testkit/adapters/chaos/toxiproxy"
 	"github.com/tuannm99/testkit/testkit/adapters/exec/k6"
+	"github.com/tuannm99/testkit/testkit/adapters/exec/playwright"
 	httpmock "github.com/tuannm99/testkit/testkit/adapters/mock/http"
 	"github.com/tuannm99/testkit/testkit/adapters/mock/mail"
 	"github.com/tuannm99/testkit/testkit/adapters/mock/socket"
@@ -78,6 +79,8 @@ var Defs = []kit.StepDef{
 
 	{Name: "sut.restart", Connector: "sut", Doc: "Restart the service under test and wait until healthy", Optional: []string{"replica", "timeout"}},
 	{Name: "sut.stop", Connector: "sut", Doc: "Graceful stop (SIGTERM, then SIGKILL after timeout)", Optional: []string{"replica", "timeout"}},
+	{Name: "ui.run", Connector: "ui", Doc: "Run Playwright UI tests (ui-tests/tests/<spec>) against the service; screenshots and traces are evidence",
+		Required: []string{"spec"}, Optional: []string{"name", "base_url", "grep", "env"}},
 	{Name: "sut.kill", Connector: "sut", Doc: "Send a signal (default KILL) — crash without cleanup", Optional: []string{"replica", "signal"}},
 	{Name: "sut.start", Connector: "sut", Doc: "Start a stopped instance and wait until healthy", Optional: []string{"replica"}},
 	{Name: "sut.pause", Connector: "sut", Doc: "Freeze the process (docker pause)", Optional: []string{"replica"}},
@@ -109,6 +112,8 @@ var Checks = []kit.CheckDef{
 		Examples: []string{"reconcile.paid_orders.mismatches", "reconcile.paid_orders.count(store=elasticsearch)"}},
 	{Prefix: "experiment", Connector: "", Doc: "Chaos experiment and load generator state",
 		Examples: []string{"experiment.recovery_seconds", "experiment.aborted", "experiment.load.sent", "experiment.load.late"}},
+	{Prefix: "ui", Connector: "ui", Doc: "Playwright UI tests run by ui.run (JSON report)",
+		Examples: []string{"ui.failed", "ui.passed", "ui.tests", "ui.errors", "ui.test(trang đơn hàng hiển thị đúng trạng thái).status"}},
 	{Prefix: "sut", Connector: "sut", Doc: "Service under test containers",
 		Examples: []string{"sut.restarts", "sut.running", "sut.log(order paid).count", "sut.metric(worker_poll_empty_total)"}},
 }
@@ -128,6 +133,7 @@ func Register(reg *kit.Registry) {
 	reg.AddConnector("reconcile", reconcile.New)
 	reg.AddConnector("chaos", toxiproxy.New)
 	reg.AddConnector("k6", k6.New)
+	reg.AddConnector("ui", playwright.New)
 	reg.AddConnector("trigger:kafka", kafka.NewTrigger)
 	reg.AddConnector("trigger:db-poll", dbpoll.New)
 	for _, d := range Defs {

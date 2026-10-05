@@ -1,0 +1,39 @@
+id: TC-UI-001
+title: Màn hình đơn hàng hiển thị "Đã thanh toán" sau khi cổng thanh toán lỗi tạm thời rồi thành công
+requirement: REQ-240
+risk: P1
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Người vận hành mở trang đơn hàng trong back-office: sau khi worker retry thành công, trang phải hiện
+  trạng thái "Đã thanh toán" và mã thanh toán; đơn không tồn tại trả 404. UI test (Playwright, TypeScript)
+  chạy trong image Playwright đã ghim phiên bản; ảnh chụp màn hình và trace là bằng chứng.
+preconditions:
+  - Đơn u1 pending; cổng thanh toán (mock OpenAPI) trả 500 rồi 201
+input:
+  order: { id: u1, customer_email: "cust-u1+{{ .ns }}@shop.test", amount_cents: 4250, currency: USD, status: pending }
+trigger: [kafka]
+given:
+  postgres.order: ["{{ .input.order }}"]
+  mock.payment: [500, 201]
+  job: { id: u1 }
+steps:
+  - step: wait.until
+    name: worker xử lý xong
+    with: { check: postgres.order.u1.status, in: [paid, failed], within: 30s }
+  - step: ui.run
+    name: order-status
+    with:
+      spec: orders/order-status.spec.ts
+      env: { ORDER_ID: u1 }
+expect:
+  - { id: A1, check: postgres.order.u1.status, eq: paid, why: "Đơn được thanh toán sau khi retry" }
+  - { id: A2, check: ui.failed, eq: 0, why: "Mọi UI test đều đạt (trạng thái, mã thanh toán, 404)" }
+  - { id: A3, check: ui.passed, eq: 2, why: "Đúng 2 UI test đã chạy và đạt (không bị bỏ qua)" }
+  - { id: A4, check: ui.errors, eq: 0, why: "Không có lỗi cấu hình/biên dịch Playwright" }
+evidence:
+  grafana: [payment_calls_total, jobs_total]
+within: 60s
+mutations:
+  - { id: M1, failpoint: no_retry, title: "Tắt retry: đơn thành 'Thanh toán lỗi', UI phải bắt được", expect_red: [A1, A2] }
