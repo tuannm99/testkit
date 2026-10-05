@@ -38,11 +38,15 @@ if [ -n "${TESTKIT_BUILD_CA:-}" ]; then
   build_args="$build_args --secret id=extra_ca,src=$TESTKIT_BUILD_CA"
 fi
 
-if [ "${TK_REBUILD:-0}" = 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  echo "tk: building $IMAGE" >&2
+# Rebuild the runner whenever the CLI sources changed (never run a stale CLI).
+src_hash=$(cd "$ROOT/testkit" && find . -type f ! -name '*_test.go' ! -path './out/*' -print | LC_ALL=C sort |
+  xargs sha256sum | sha256sum | cut -c1-16)
+have_hash=$(docker image inspect --format '{{index .Config.Labels "testkit.source_hash"}}' "$IMAGE" 2>/dev/null || true)
+if [ "${TK_REBUILD:-0}" = 1 ] || [ "$have_hash" != "$src_hash" ]; then
+  echo "tk: building $IMAGE (sources $src_hash)" >&2
   # shellcheck disable=SC2086
-  docker build -q -t "$IMAGE" --target runner --label testkit.managed=true $build_args \
-    -f "$ROOT/testkit/Dockerfile" "$ROOT/testkit" >/dev/null
+  docker build -q -t "$IMAGE" --target runner --label testkit.managed=true --label "testkit.source_hash=$src_hash" \
+    $build_args -f "$ROOT/testkit/Dockerfile" "$ROOT/testkit" >/dev/null
 fi
 
 net_args=""
