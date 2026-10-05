@@ -63,8 +63,10 @@ esac
 
 # The QC token variable is the one named in testkit.yaml (qc.token_env).
 TOKEN_ENV=$(sed -n 's/^ *token_env: *\([A-Z_][A-Z0-9_]*\).*/\1/p' "$ROOT/testkit.yaml")
+# ...and the AI key variable named in ai.api_key_env (ANTHROPIC_* is always forwarded).
+AI_KEY_ENV=$(sed -n 's/^ *api_key_env: *\([A-Z_][A-Z0-9_]*\).*/\1/p' "$ROOT/testkit.yaml")
 env_args=""
-for v in $(env | sed -n 's/^\(TESTKIT_[A-Z_]*\|TK_[A-Z0-9_]*\|[A-Z_]*_IMAGE\|HTTPS\?_PROXY\|NO_PROXY\|https\?_proxy\|no_proxy\)=.*/\1/p') $TOKEN_ENV; do
+for v in $(env | sed -n 's/^\(TESTKIT_[A-Z_]*\|TK_[A-Z0-9_]*\|[A-Z_]*_IMAGE\|HTTPS\?_PROXY\|NO_PROXY\|https\?_proxy\|no_proxy\|ANTHROPIC_[A-Z_]*\)=.*/\1/p') $TOKEN_ENV $AI_KEY_ENV; do
   case "$v" in TESTKIT_IN_NETWORK) continue ;; esac
   env_args="$env_args -e $v"
 done
