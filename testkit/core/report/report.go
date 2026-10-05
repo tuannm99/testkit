@@ -6,6 +6,7 @@
 package report
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"encoding/xml"
@@ -279,7 +280,7 @@ func HTML(w io.Writer, dir *evidence.Dir, run *result.Run, man *evidence.Manifes
 		}
 		for _, a := range ex.Artifacts {
 			ov := outputView{Title: a.Title, Path: a.Path, Kind: a.Kind}
-			if raw, err := os.ReadFile(dir.Path(a.Path)); err == nil {
+			if raw, err := os.ReadFile(dir.Path(a.Path)); err == nil && a.Kind != "image" && !binary(raw) {
 				ov.Preview = preview(raw, a.Kind)
 			}
 			v.Outputs = append(v.Outputs, ov)
@@ -453,3 +454,6 @@ func fmtNum(v float64) string {
 	}
 	return strings.TrimRight(strings.TrimRight(strconv.FormatFloat(v, 'f', 4, 64), "0"), ".")
 }
+
+// binary reports whether a file is not text (no quick view in the report).
+func binary(b []byte) bool { return bytes.IndexByte(b[:min(len(b), 8000)], 0) >= 0 }

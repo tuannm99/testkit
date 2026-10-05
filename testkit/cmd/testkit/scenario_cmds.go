@@ -232,7 +232,7 @@ func planCase(w io.Writer, p *config.Project, svc *config.Service, reg *kit.Regi
 	}
 	for _, name := range config.SortedKeys(svc.Mocks) {
 		m := svc.Mocks[name]
-		fmt.Fprintf(w, "  mock           %s (%s) api %s verified %s %s\n", name, m.Kind, m.APIVersion, m.VerifiedAt, m.OpenAPI)
+		fmt.Fprintf(w, "  mock           %s (%s) api %s verified %s against %s %s\n", name, m.Kind, m.APIVersion, m.VerifiedAt, m.VerifiedAgainst, m.OpenAPI)
 	}
 	if trig != "" {
 		fmt.Fprintf(w, "  trigger        %s\n", trig)
@@ -330,9 +330,16 @@ func (s *runSetup) start(cmd *cobra.Command, g *globals, cases []*scenario.Case,
 			return err
 		}
 	}
+	ui := false
 	for _, c := range cases {
 		if len(c.Chaos.Proxies) > 0 {
 			need = append(need, "toxiproxy")
+		}
+		ui = ui || c.UsesUI()
+	}
+	if ui {
+		if err := s.st.EnsureImage(ctx, "ui-runner", build); err != nil {
+			return err
 		}
 	}
 	if err := s.st.RequireHealthy(ctx, dedupeStrings(need)); err != nil {
@@ -359,9 +366,12 @@ func (s *runSetup) start(cmd *cobra.Command, g *globals, cases []*scenario.Case,
 }
 
 // finish writes the report files and seals the bundle.
-func (s *runSetup) finish(ctx context.Context, run *result.Run, dir *evidence.Dir) error {
+func (s *runSetup) finish(ctx context.Context, w io.Writer, run *result.Run, dir *evidence.Dir) error {
 	man := buildManifest(ctx, s.p, s.st, run, s.services)
 	if err := report.WriteAll(dir, run, man); err != nil {
+		return err
+	}
+	if err := exportQC(w, s.p, dir, run, s.cases); err != nil {
 		return err
 	}
 	man.FinishedAt = time.Now().UTC()
@@ -370,14 +380,35 @@ func (s *runSetup) finish(ctx context.Context, run *result.Run, dir *evidence.Di
 
 func newRunCmd(g *globals) *cobra.Command {
 	var opt orchestrator.Options
-	var noObs, build bool
+	var noObs, build, pack bool
 	cmd := &cobra.Command{
-		Use:   "run [case.yaml|dir]...",
+		Use:   "run [case.yaml|dir]... | run <suite.yaml>",
 		Short: "Run test cases and write the evidence bundle (report.html, junit.xml, traceability.csv, manifest.json)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
+			// A suite file (kind: Suite) selects the cases and how to run them.
+			var suite *scenario.Suite
+			if len(args) == 1 && scenario.IsSuite(args[0]) {
+				var err error
+				if suite, err = scenario.LoadSuite(args[0]); err != nil {
+					return err
+				}
+				args = suite.Paths()
+				opt.Suite, opt.OnlyApproved = suite.Name, suite.ApprovedOnly()
+				opt.Mutations = opt.Mutations || suite.Mutations
+				if !cmd.Flags().Changed("retries") {
+					opt.Retries = suite.Retries
+				}
+				if !cmd.Flags().Changed("parallel") && suite.Parallel > 0 {
+					opt.Parallel = suite.Parallel
+				}
+			}
 			s, err := prepareRun(cmd, g, args)
 			if err != nil {
 				return err
+			}
+			if suite != nil {
+				s.cases = excludeCases(out, s.cases, suite.Exclude)
 			}
 			if err := s.start(cmd, g, s.cases, build, noObs); err != nil {
 				return err
@@ -388,10 +419,26 @@ func newRunCmd(g *globals) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := s.finish(cmd.Context(), run, dir); err != nil {
+			if suite != nil {
+				run.Gate = orchestrator.Gate(run, suite, s.cases, time.Now())
+			}
+			if err := s.finish(cmd.Context(), out, run, dir); err != nil {
 				return err
 			}
-			return printSummary(cmd.OutOrStdout(), run, dir, time.Since(started))
+			sumErr := printSummary(out, run, dir, time.Since(started))
+			if suite == nil {
+				return sumErr
+			}
+			printGate(out, run.Gate)
+			if suite.Pack || pack {
+				if _, err := packBundle(out, s.p, dir.Root); err != nil {
+					return err
+				}
+			}
+			if run.Gate.Decision != "GO" {
+				return exitErr{1, "release gate: NO-GO"}
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&opt.RunID, "run-id", "", "run id (default: generated)")
@@ -402,7 +449,34 @@ func newRunCmd(g *globals) *cobra.Command {
 	cmd.Flags().BoolVar(&opt.Mutations, "mutations", false, "also run each case's mutations (counter-evidence)")
 	cmd.Flags().BoolVar(&noObs, "no-observability", false, "do not capture Grafana panels/annotations")
 	cmd.Flags().BoolVar(&build, "build", false, "rebuild service images first")
+	cmd.Flags().BoolVar(&pack, "pack", false, "suite runs: zip the bundle to out/<run_id>.zip (also suite pack: true)")
 	return cmd
+}
+
+func excludeCases(w io.Writer, cases []*scenario.Case, ids []string) []*scenario.Case {
+	var out []*scenario.Case
+	for _, c := range cases {
+		if contains(ids, c.ID) {
+			fmt.Fprintf(w, "suite: %s excluded\n", c.ID)
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func printGate(w io.Writer, g *result.Gate) {
+	fmt.Fprintf(w, "\nrelease gate: %s\n", g.Decision)
+	for _, r := range g.Rules {
+		mark := "ok  "
+		if !r.Passed {
+			mark = "FAIL"
+		}
+		fmt.Fprintf(w, "  %s %s — %s\n", mark, r.Name, r.Detail)
+	}
+	for _, q := range g.Flaky {
+		fmt.Fprintf(w, "  quarantined %s (owner %s, until %s, %s)\n", q.CaseID, q.Owner, q.Deadline, q.Ticket)
+	}
 }
 
 func dedupeStrings(l []string) []string {
@@ -497,7 +571,7 @@ func buildManifest(ctx context.Context, p *config.Project, st *infra.Stack, run 
 		for _, mn := range config.SortedKeys(svc.Mocks) {
 			mk := svc.Mocks[mn]
 			m.Mocks = append(m.Mocks, evidence.MockProvenance{Service: name, Mock: mn, Kind: mk.Kind,
-				APIVersion: mk.APIVersion, VerifiedAt: mk.VerifiedAt, Spec: mk.OpenAPI})
+				APIVersion: mk.APIVersion, VerifiedAt: mk.VerifiedAt, Against: mk.VerifiedAgainst, Spec: mk.OpenAPI})
 		}
 	}
 	for k, v := range p.Env() {
@@ -517,6 +591,9 @@ func newReportCmd(g *globals) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root := args[0]
+			if err := requireIntact(root); err != nil {
+				return err
+			}
 			run, err := report.LoadRun(root)
 			if err != nil {
 				return err

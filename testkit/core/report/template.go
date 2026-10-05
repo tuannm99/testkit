@@ -28,7 +28,7 @@ pre{background:var(--soft);border:1px solid var(--line);padding:8px;overflow:aut
 section.case{border:1px solid var(--line);border-radius:8px;padding:4px 16px 12px;margin:22px 0}
 section.case>h3{font-size:17px}
 .kv{display:grid;grid-template-columns:170px 1fr;gap:2px 12px}.kv div:nth-child(odd){color:var(--muted)}
-figure{margin:8px 0;border:1px solid var(--line);border-radius:6px;padding:6px}figure img{max-width:100%;display:block}
+figure{margin:8px 0;border:1px solid var(--line);border-radius:6px;padding:6px}figure img{max-width:100%;display:block}img.shot{max-width:480px;width:100%;border:1px solid var(--line);border-radius:4px;margin-top:4px}
 figcaption{font-size:12px;color:var(--muted)}
 ol.why li{margin:4px 0}.ev{font-size:12px}
 details summary{cursor:pointer;color:var(--acc)}
@@ -171,7 +171,7 @@ details summary{cursor:pointer;color:var(--acc)}
 
 <h4>5. Đầu ra (response, snapshot DB, mail, journal mock, log)</h4>
 {{if .Outputs}}<table><tr><th>Bằng chứng</th><th>Tệp</th></tr>
-{{range .Outputs}}<tr><td>{{.Title}}{{if .Preview}}<details><summary>xem nhanh</summary><pre>{{.Preview}}</pre></details>{{end}}</td><td class="ev"><a href="{{.Path}}">{{.Path}}</a></td></tr>{{end}}
+{{range .Outputs}}<tr><td>{{.Title}}{{if eq .Kind "image"}}<div><img class="shot" src="{{.Path}}" alt="{{.Title}}" loading="lazy"></div>{{end}}{{if .Preview}}<details><summary>xem nhanh</summary><pre>{{.Preview}}</pre></details>{{end}}</td><td class="ev"><a href="{{.Path}}">{{.Path}}</a></td></tr>{{end}}
 </table>{{else}}<p class="muted">Không có tệp đầu ra.</p>{{end}}
 
 <h4>6. Grafana (ảnh để xem nhanh, số liệu thô là bằng chứng gốc)</h4>
@@ -207,7 +207,7 @@ details summary{cursor:pointer;color:var(--acc)}
 </div>
 <table><tr><th>Thành phần</th><th>Image đang chạy</th></tr>{{range $k, $v := .Running}}<tr><td>{{$k}}</td><td><code>{{$v}}</code></td></tr>{{end}}
 {{range $k, $v := .Services}}<tr><td>service under test: {{$k}}</td><td><code>{{$v}}</code></td></tr>{{end}}</table>
-{{if .Mocks}}<h4>Nguồn gốc mock</h4><table><tr><th>Service</th><th>Mock</th><th>Loại</th><th>Phiên bản API</th><th>Kiểm chứng ngày</th><th>Spec (sha256)</th></tr>
-{{range .Mocks}}<tr><td>{{.Service}}</td><td>{{.Mock}}</td><td>{{.Kind}}</td><td>{{.APIVersion}}</td><td>{{.VerifiedAt}}</td><td><code>{{.Spec}}</code> <span class="muted">{{.SpecSHA256}}</span></td></tr>{{end}}</table>{{end}}
+{{if .Mocks}}<h4>Nguồn gốc mock</h4><table><tr><th>Service</th><th>Mock</th><th>Loại</th><th>Phiên bản API</th><th>Kiểm chứng ngày</th><th>Đối chiếu với</th><th>Spec (sha256)</th></tr>
+{{range .Mocks}}<tr><td>{{.Service}}</td><td>{{.Mock}}</td><td>{{.Kind}}</td><td>{{.APIVersion}}</td><td>{{.VerifiedAt}}</td><td>{{if eq .Against "sandbox"}}sandbox của nhà cung cấp{{else if eq .Against "docs"}}<span class="pill err">tự fake theo tài liệu</span> <span class="muted">(không có sandbox: rủi ro lệch hợp đồng với API thật)</span>{{else}}—{{end}}</td><td><code>{{.Spec}}</code> <span class="muted">{{.SpecSHA256}}</span></td></tr>{{end}}</table>{{end}}
 {{end}}
 </main></body></html>`

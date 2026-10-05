@@ -64,7 +64,7 @@ func newAdmitCmd(g *globals) *cobra.Command {
 			}
 			sum := ""
 			if dir != nil {
-				if err := s.finish(cmd.Context(), run, dir); err != nil {
+				if err := s.finish(cmd.Context(), out, run, dir); err != nil {
 					return err
 				}
 				raw, err := os.ReadFile(dir.Path("manifest.json"))

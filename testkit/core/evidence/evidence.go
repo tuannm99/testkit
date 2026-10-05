@@ -164,6 +164,7 @@ type MockProvenance struct {
 	Kind       string `json:"kind"`
 	APIVersion string `json:"api_version"`
 	VerifiedAt string `json:"verified_at"`
+	Against    string `json:"verified_against,omitempty"` // sandbox | docs
 	Spec       string `json:"spec,omitempty"`
 	SpecSHA256 string `json:"spec_sha256,omitempty"`
 }

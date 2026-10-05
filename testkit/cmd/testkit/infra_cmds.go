@@ -208,3 +208,5 @@ func without(l []string, v string) []string {
 	}
 	return out
 }
+
+func (g *globals) project() (*config.Project, error) { return config.LoadProject(g.root) }

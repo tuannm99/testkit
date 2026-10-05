@@ -158,6 +158,10 @@ type MockSpec struct {
 	Operation   string `yaml:"operation"`   // default operationId for scripted responses
 	APIVersion  string `yaml:"api_version"` // version of the real API the mock imitates
 	VerifiedAt  string `yaml:"verified_at"` // date the mock was last checked against the real API
+	// VerifiedAgainst: sandbox (replayed against the provider's sandbox) |
+	// docs (built from the provider's documentation/OpenAPI only: self-faked,
+	// no sandbox exists). Required for http/webhook mocks.
+	VerifiedAgainst string `yaml:"verified_against"`
 	Secret      string `yaml:"secret"`      // test-only signing secret (webhooks)
 	Protocol    string `yaml:"protocol"`    // socket: ws | tcp
 	Description string `yaml:"description"`
@@ -292,6 +296,9 @@ func (s *Service) Validate() error {
 		}
 		if (m.Kind == "http" || m.Kind == "webhook") && (m.APIVersion == "" || m.VerifiedAt == "") {
 			add("mocks.%s: api_version and verified_at are required (mock provenance)", name)
+		}
+		if (m.Kind == "http" || m.Kind == "webhook") && m.VerifiedAgainst != "sandbox" && m.VerifiedAgainst != "docs" {
+			add("mocks.%s.verified_against must be sandbox or docs (docs = self-faked from the provider's documentation)", name)
 		}
 		if m.OpenAPI != "" {
 			if _, err := os.Stat(s.Path(m.OpenAPI)); err != nil {

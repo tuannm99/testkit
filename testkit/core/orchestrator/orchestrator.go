@@ -442,7 +442,7 @@ func (r *Runner) execute(ctx context.Context, dir *evidence.Dir, opt Options, c 
 	e.checkers["experiment"] = experimentChecker{e: e}
 
 	// --- provision ----------------------------------------------------------------------
-	names := r.connectorNames(svc, trigger, c.Perf != nil && c.Perf.Executor == "k6")
+	names := r.connectorNames(svc, trigger, c.Perf != nil && c.Perf.Executor == "k6", c.UsesUI())
 	for _, n := range names {
 		f, ok := r.Registry.Connectors[n]
 		if !ok {
@@ -952,7 +952,7 @@ func (e *execution) logTail(n int) []string {
 
 // connectorNames lists the connectors of a service in provisioning order:
 // stores, mocks, the trigger, then the service under test.
-func (r *Runner) connectorNames(svc *config.Service, trigger string, perfK6 bool) []string {
+func (r *Runner) connectorNames(svc *config.Service, trigger string, perfK6, ui bool) []string {
 	names := append([]string{}, svc.Stores.Names()...)
 	kinds := map[string]bool{}
 	for _, m := range svc.Mocks {
@@ -975,6 +975,9 @@ func (r *Runner) connectorNames(svc *config.Service, trigger string, perfK6 bool
 	}
 	if perfK6 && r.Registry.Connectors["k6"] != nil {
 		names = append(names, "k6")
+	}
+	if ui && r.Registry.Connectors["ui"] != nil {
+		names = append(names, "ui")
 	}
 	if trigger != "" {
 		names = append(names, "trigger:"+trigger)

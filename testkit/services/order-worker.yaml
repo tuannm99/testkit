@@ -52,11 +52,13 @@ mocks:
     operation: createCharge
     api_version: "2024-06-01"
     verified_at: "2026-10-01"
+    verified_against: docs                  # no provider sandbox: self-faked from the provider's OpenAPI
     description: Payment gateway (charges, Idempotency-Key required)
   psp:
     kind: webhook
     api_version: "2024-06-01"
     verified_at: "2026-10-01"
+    verified_against: docs
     secret: test-only-webhook-secret     # throw-away value, also given to the service
     description: Payment provider calling back the service (refund events)
   partner:
