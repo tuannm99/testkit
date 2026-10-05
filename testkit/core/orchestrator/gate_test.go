@@ -75,3 +75,16 @@ func TestGate(t *testing.T) {
 		t.Fatal("perf regression must be NO-GO")
 	}
 }
+
+func TestExclusive(t *testing.T) {
+	perf := &scenario.Case{ID: "P", Perf: &scenario.PerfSpec{}}
+	load := &scenario.Case{ID: "L", Steps: []scenario.StepSpec{{Step: "load.start", With: map[string]any{"rate": 10}}}}
+	infra := &scenario.Case{ID: "I", Steps: []scenario.StepSpec{{Step: "chaos.container", With: map[string]any{"target": "postgres", "action": "pause"}}}}
+	sut := &scenario.Case{ID: "S", Steps: []scenario.StepSpec{{Step: "chaos.container", With: map[string]any{"target": "sut", "action": "pause"}}}}
+	plain := &scenario.Case{ID: "F"}
+	for c, want := range map[*scenario.Case]bool{perf: true, load: true, infra: true, sut: false, plain: false} {
+		if got := Exclusive(c); got != want {
+			t.Errorf("%s: exclusive=%v, want %v", c.ID, got, want)
+		}
+	}
+}

@@ -1082,15 +1082,23 @@ func redact(m map[string]any) map[string]any {
 	return out
 }
 
-// Exclusive reports whether a case breaks shared infrastructure (an
-// infrastructure container rather than the service under test) and must
-// therefore run alone.
+// Exclusive reports whether a case must run alone, after the parallel batch:
+// it breaks shared infrastructure (an infrastructure container rather than
+// the service under test), or it measures timing under load (perf cases,
+// load.start) — other executions on the shared stores would contaminate the
+// measurement and make it incomparable with a baseline recorded alone.
 func Exclusive(c *scenario.Case) bool {
+	if c.Perf != nil {
+		return true
+	}
 	steps, err := c.Expand()
 	if err != nil {
 		return false
 	}
 	for _, s := range steps {
+		if s.Step == "load.start" {
+			return true
+		}
 		if s.Step == "chaos.container" {
 			if t := kit.Str(s.With, "target"); t != "" && t != "sut" {
 				return true

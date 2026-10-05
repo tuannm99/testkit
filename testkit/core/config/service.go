@@ -153,18 +153,18 @@ type RedisStore struct {
 
 // MockSpec declares a third party the service talks to.
 type MockSpec struct {
-	Kind        string `yaml:"kind"`        // http | webhook | smtp | socket
-	OpenAPI     string `yaml:"openapi"`     // spec file; requests are validated against it
-	Operation   string `yaml:"operation"`   // default operationId for scripted responses
-	APIVersion  string `yaml:"api_version"` // version of the real API the mock imitates
-	VerifiedAt  string `yaml:"verified_at"` // date the mock was last checked against the real API
+	Kind       string `yaml:"kind"`        // http | webhook | smtp | socket
+	OpenAPI    string `yaml:"openapi"`     // spec file; requests are validated against it
+	Operation  string `yaml:"operation"`   // default operationId for scripted responses
+	APIVersion string `yaml:"api_version"` // version of the real API the mock imitates
+	VerifiedAt string `yaml:"verified_at"` // date the mock was last checked against the real API
 	// VerifiedAgainst: sandbox (replayed against the provider's sandbox) |
 	// docs (built from the provider's documentation/OpenAPI only: self-faked,
 	// no sandbox exists). Required for http/webhook mocks.
 	VerifiedAgainst string `yaml:"verified_against"`
-	Secret      string `yaml:"secret"`      // test-only signing secret (webhooks)
-	Protocol    string `yaml:"protocol"`    // socket: ws | tcp
-	Description string `yaml:"description"`
+	Secret          string `yaml:"secret"`   // test-only signing secret (webhooks)
+	Protocol        string `yaml:"protocol"` // socket: ws | tcp
+	Description     string `yaml:"description"`
 }
 
 // TriggerSpec declares how a job reaches the worker for one trigger kind.
