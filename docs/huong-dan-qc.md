@@ -2,14 +2,15 @@
 
 Máy chạy chỉ cần Docker. Mọi lệnh chạy từ thư mục gốc của repo.
 
-## 1. Lần đầu: tạo test case trong Zephyr Scale
+## 1. Danh sách testcase (CSV + Markdown)
 
-    ./tk qc cases                       # → out/qc/testcases.csv
+    ./tk qc cases                       # → out/qc/testcases.csv và out/qc/testcases.md
 
-Zephyr Scale → **Tests → Import → CSV**, chọn `out/qc/testcases.csv`, ánh xạ cột (Name, Objective,
-Precondition, Priority, Status, Labels, Folder, Owner, Coverage (Issues), Step, Test Data, Expected Result).
-Mỗi bước là một dòng; dòng đầu của mỗi case chứa các trường của case. Sau khi import, ghi key Zephyr
-(vd. `ORD-T12`) vào trường `qc_key:` của tệp YAML tương ứng để kết quả gắn đúng test case.
+- `testcases.md`: đọc trực tiếp (mục đích, tiền điều kiện, từng bước với dữ liệu và kỳ vọng, phản chứng).
+- `testcases.csv`: mở bằng Excel hoặc import vào công cụ quản lý test (Jira plugin, TestRail, ...). Mỗi bước
+  là một dòng, các cột của case lặp lại ở mọi dòng; cột: Case ID, QC Key, Title, Requirement, Risk, Priority,
+  Status, Owner, Service, Triggers, Purpose, Preconditions, Step No, Step, Test Data, Expected Result, Source File.
+  Khi đã có mã test case trong công cụ QC, ghi vào `qc_key:` của tệp YAML để các lần xuất sau mang theo mã đó.
 
 ## 2. Chạy bộ release
 
@@ -30,15 +31,20 @@ Mã thoát 0 = **GO**, khác 0 = **NO-GO**. Quyết định do các luật cứn
   tài liệu/OpenAPI của họ, ngày kiểm chứng ghi rõ — đây là rủi ro còn lại cần biết khi ký.
 - Toàn vẹn: `./tk verify out/<run_id>` (sha256 từng tệp trong `manifest.json`).
 
-## 4. Đưa kết quả vào Jira
+## 4. Bàn giao kết quả
 
-Trong gói có `qc/zephyr-scale/` (executions.zip, test-cycle.json, testcases.csv, HUONG-DAN-IMPORT.md).
+Trong gói có thư mục `qc/`:
 
-    ZEPHYR_TOKEN=<token API Zephyr Scale> ./tk qc push out/<run_id>
+| Tệp | Nội dung |
+|-----|----------|
+| `results.md` | Tóm tắt cho người đọc: cổng release từng luật, kết quả từng testcase theo trigger, phản chứng, link bằng chứng |
+| `results.csv` | Một dòng mỗi lần chạy (case × trigger): kết quả case, kết quả lần chạy, phân loại, lý do, mutation đỏ/tổng, thời gian, đường dẫn bằng chứng — import vào công cụ QC hoặc Excel |
+| `testcases.csv` / `.md` | Đúng các testcase của run này (như mục 1) |
 
-tạo một **test cycle** mới với kết quả từng test case (Passed/Failed) và mô tả trỏ tới gói bằng chứng.
-Đính kèm `out/<run_id>.zip` vào test cycle hoặc ticket release để người ký xem bằng chứng.
-Token chỉ đọc từ biến môi trường, không bao giờ ghi vào tệp hay bằng chứng.
+Đính kèm `out/<run_id>.zip` vào ticket release để người ký xem bằng chứng (`report.html`).
+
+Sau này chuyển sang công cụ khác (vd. Zephyr Scale) chỉ là thêm bộ xuất: `qc.tool: files, zephyr-scale`
+trong `testkit.yaml` (bộ xuất Zephyr Scale đã có sẵn, kèm `ZEPHYR_TOKEN=... ./tk qc push out/<run_id>`).
 
 ## 5. Testcase mới
 

@@ -37,8 +37,9 @@ Release (what QC signs off — see `docs/huong-dan-qc.md`):
 ```sh
 ./tk run testkit/suites/release.yaml        # approved cases + mutations + retries → GO / NO-GO
                                             # → out/<run_id>.zip (report, evidence, Zephyr Scale import files)
-./tk qc cases                               # out/qc/testcases.csv: create the test cases in Zephyr Scale
-ZEPHYR_TOKEN=... ./tk qc push out/<run_id>  # results → a new Zephyr Scale test cycle
+./tk qc cases                               # out/qc/testcases.csv + .md (tool-neutral)
+                                            # each bundle has qc/results.csv + .md and qc/testcases.csv + .md
+ZEPHYR_TOKEN=... ./tk qc push out/<run_id>  # optional, with qc.tool: files, zephyr-scale
 ./tk pack out/<run_id>                      # re-pack: checks the manifest and that no secret is inside
 ```
 
