@@ -35,10 +35,13 @@ images:                              # images TestKit builds itself (pinned by T
   ui-runner:                         # Playwright + the UI tests of ui-tests/ (step ui.run)
     context: ui-tests
     dockerfile: ui-tests/Dockerfile
-qc:                                  # test management tool (Jira + Zephyr Scale test cycles)
-  tool: zephyr-scale
-  project_key: ORD                   # TODO: real Jira project key
-  api: https://api.zephyrscale.smartbear.com/v2   # Zephyr Scale Cloud API
+qc:                                  # handover to QC / test management
+  # files: tool-neutral CSV + Markdown (testcases.*, results.*) in every bundle — the default.
+  # zephyr-scale: also the Zephyr Scale import files and `qc push` (settings below, kept for the port).
+  # Several: "files, zephyr-scale". Override per command with TK_QC_TOOL.
+  tool: files
+  project_key: ORD                   # Jira project key (zephyr-scale)
+  api: https://api.zephyrscale.smartbear.com/v2   # Zephyr Scale Cloud API (zephyr-scale)
   token_env: ZEPHYR_TOKEN            # token read from this env var at push time, never written anywhere
   cycle_name: "{{ .suite }} · {{ .run_id }}"
   folder: /TestKit

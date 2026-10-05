@@ -25,6 +25,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/tuannm99/testkit/testkit/adapters/qc/qcdata"
 	"github.com/tuannm99/testkit/testkit/core/config"
 	"github.com/tuannm99/testkit/testkit/core/evidence"
 	"github.com/tuannm99/testkit/testkit/core/result"
@@ -229,36 +230,11 @@ func TestCasesCSV(cases []*scenario.Case, cfg *config.QC) ([]byte, error) {
 	sorted := append([]*scenario.Case(nil), cases...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
 	for _, c := range sorted {
-		type step struct{ action, data, expected string }
-		var steps []step
-		given, err := c.GivenEntries()
+		steps, err := qcdata.Steps(c)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", c.ID, err)
+			return nil, err
 		}
-		for _, g := range given {
-			steps = append(steps, step{"Chuẩn bị: " + g.Key, compact(g.Value), ""})
-		}
-		for _, s := range c.Steps {
-			action := s.Step
-			if s.Name != "" {
-				action += " — " + s.Name
-			}
-			steps = append(steps, step{action, compact(s.With), ""})
-		}
-		for _, e := range c.Expect {
-			exp := fmt.Sprintf("%s %s", e.Op, compact(e.Expected))
-			if e.Why != "" {
-				exp += " — " + e.Why
-			}
-			steps = append(steps, step{"Kiểm tra " + e.ID + ": " + e.Check, "", exp})
-		}
-		if len(steps) == 0 {
-			steps = append(steps, step{"Chạy kịch bản " + c.ID, "", "pass"})
-		}
-		priority := map[string]string{"P0": "High", "P1": "High", "P2": "Normal", "P3": "Low"}[c.Risk]
-		if priority == "" {
-			priority = "Normal"
-		}
+		priority := qcdata.Priority(c.Risk)
 		status := map[string]string{"approved": "Approved", "draft": "Draft"}[c.Status]
 		labels := append([]string{"testkit", c.Service}, c.Tags...)
 		for i, s := range steps {
@@ -268,7 +244,7 @@ func TestCasesCSV(cases []*scenario.Case, cfg *config.QC) ([]byte, error) {
 				row = []string{c.QCKey, name, strings.TrimSpace(c.Purpose), strings.Join(c.Preconditions, "\n"), priority, status,
 					strings.Join(labels, " "), folder, c.Owner, strings.Join(c.Requirement, ", "), "", "", ""}
 			}
-			row[10], row[11], row[12] = s.action, s.data, s.expected
+			row[10], row[11], row[12] = s.Action, s.Data, s.Expected
 			if err := w.Write(row); err != nil {
 				return nil, err
 			}
@@ -276,20 +252,6 @@ func TestCasesCSV(cases []*scenario.Case, cfg *config.QC) ([]byte, error) {
 	}
 	w.Flush()
 	return b.Bytes(), w.Error()
-}
-
-func compact(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return x
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprint(v)
-	}
-	return string(b)
 }
 
 func guide(cfg *config.QC, run *result.Run) string {

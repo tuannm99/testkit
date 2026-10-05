@@ -106,7 +106,7 @@ details summary{cursor:pointer;color:var(--acc)}
 <table><tr><th>Yêu cầu</th><th>Testcase</th></tr>
 {{range .Matrix}}<tr><td>{{.Req}}</td><td>{{range .Execs}}<a href="#{{anchor .ID}}">{{.ID}}</a> <span class="pill {{cls .Result}}">{{.Result}}</span><br>{{end}}</td></tr>{{end}}
 </table>
-<p class="muted">Bản máy đọc: <a href="traceability.csv">traceability.csv</a> · <a href="junit.xml">junit.xml</a> · <a href="run.json">run.json</a> · <a href="manifest.json">manifest.json</a></p>
+<p class="muted">Bản máy đọc: <a href="traceability.csv">traceability.csv</a> · <a href="junit.xml">junit.xml</a> · <a href="run.json">run.json</a> · <a href="manifest.json">manifest.json</a><br>Bàn giao QC: <a href="qc/results.csv">qc/results.csv</a> · <a href="qc/results.md">qc/results.md</a> · <a href="qc/testcases.csv">qc/testcases.csv</a> · <a href="qc/testcases.md">qc/testcases.md</a></p>
 
 {{range .Execs}}{{$ex := .}}
 <section class="case" id="{{.Anchor}}">

@@ -32,7 +32,7 @@ type ImageBuild struct {
 
 // QC describes the test management tool results are exported to.
 type QC struct {
-	Tool       string `yaml:"tool"`        // zephyr-scale
+	Tool       string `yaml:"tool"`        // files (CSV + Markdown, default) | zephyr-scale; comma-separated for several
 	ProjectKey string `yaml:"project_key"` // Jira project key, e.g. ORD
 	API        string `yaml:"api"`         // Zephyr Scale API base URL (Cloud: https://api.zephyrscale.smartbear.com/v2)
 	TokenEnv   string `yaml:"token_env"`   // name of the env var holding the API token (never the token itself)
@@ -41,6 +41,25 @@ type QC struct {
 	// AutoCreate lets Zephyr create test cases for executions without qc_key
 	// (matched by name). Off by default: cases should be imported first.
 	AutoCreate bool `yaml:"auto_create_test_cases"`
+}
+
+// QCTools lists the QC exporters to run: qc.tool, overridden by TK_QC_TOOL,
+// "files" when nothing is configured.
+func (p *Project) QCTools() []string {
+	spec := os.Getenv("TK_QC_TOOL")
+	if spec == "" && p.QC != nil {
+		spec = p.QC.Tool
+	}
+	var out []string
+	for _, t := range strings.Split(spec, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		out = []string{"files"}
+	}
+	return out
 }
 
 // Project is the parsed testkit.yaml plus the merged environment.
