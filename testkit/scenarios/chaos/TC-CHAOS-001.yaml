@@ -1,0 +1,59 @@
+id: TC-CHAOS-001
+title: Cổng thanh toán chậm 1.5s trong 8s dưới tải — không mất job, không trừ tiền trùng, phục hồi ≤ 30s
+requirement: REQ-280
+risk: P0
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Thí nghiệm chaos theo quy trình: tải nền cố định 10 job/s (open model) → trạng thái ổn định → thêm độ trễ
+  1.5s vào cổng thanh toán (chỉ namespace này, qua Toxiproxy) trong 8s, có điều kiện dừng khẩn cấp khi lag
+  vượt 150 → gỡ lỗi → đo thời gian để lag về lại mức ổn định. Sau cùng mọi đơn phải được thanh toán đúng một lần.
+preconditions:
+  - 200 đơn pending; job được giao qua Kafka với tốc độ cố định 10/s
+  - Worker gọi cổng thanh toán qua proxy Toxiproxy riêng của execution
+  - Trạng thái ổn định = lag consumer ≤ 5
+input:
+  orders: 200
+trigger: [kafka]
+chaos:
+  proxies: [payment]
+  max_recovery: 30s
+given:
+  mock.payment: [201]
+steps:
+  - step: postgres.exec
+    with:
+      sql: >
+        INSERT INTO orders (id, customer_email, amount_cents, currency)
+        SELECT 'L' || g, 'c' || g || '+{{ .ns }}@shop.test', 100 + g, 'USD' FROM generate_series(1, {{ .input.orders }}) g
+  - step: load.start
+    with: { rate: 10, from: 1, to: "{{ .input.orders }}", id_prefix: L }
+  - step: wait.until
+    name: trạng thái ổn định trước khi gây lỗi
+    with: { check: postgres.order.count(status=paid), gte: 20, within: 30s }
+  - step: chaos.latency
+    with: { proxy: payment, latency: 1500 }
+  - step: chaos.hold
+    with:
+      for: 8s
+      abort_if:
+        - { check: kafka.lag(order-worker), gt: 150, why: "blast radius: dừng thí nghiệm nếu tồn đọng vượt 150 job" }
+  - step: chaos.clear
+  - step: chaos.recover
+    with:
+      within: 60s
+      expect:
+        - { check: kafka.lag(order-worker), lte: 5, why: "tồn đọng về lại mức ổn định" }
+  - step: load.wait
+    with: { timeout: 60s }
+expect:
+  - { id: A1, check: postgres.order.count(status=paid), eq: 200, why: "Không mất job: cả 200 đơn được thanh toán" }
+  - { id: A2, check: mock.payment.succeeded, eq: 200, why: "Không trừ tiền trùng: đúng 200 lần trừ tiền thành công" }
+  - { id: A3, check: experiment.aborted, eq: false, why: "Lỗi nằm trong giới hạn cho phép (không phải dừng khẩn cấp)" }
+  - { id: A4, check: experiment.recovery_seconds, lte: 30, why: "Phục hồi trạng thái ổn định trong thời gian cho phép" }
+  - { id: A5, check: experiment.load.late, eq: 0, why: "Máy tạo tải không bị nghẽn (mọi job được phát đúng nhịp)" }
+  - { id: A6, check: reconcile.paid_orders.mismatches, eq: 0, why: "Mọi kho dữ liệu khớp nhau sau sự cố" }
+evidence:
+  grafana: [throughput, consumer_lag, payment_latency, jobs_total]
+within: 120s

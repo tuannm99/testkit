@@ -1,0 +1,41 @@
+id: TC-ORDER-017
+title: Worker retry đúng khi cổng thanh toán lỗi tạm thời
+requirement: REQ-231
+risk: P0
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Khi cổng thanh toán lỗi tạm thời (500, rồi 429 kèm Retry-After), worker phải thử lại
+  đúng số lần cần thiết, chuyển đơn sang "paid", không gọi thừa cổng thanh toán, không
+  trừ tiền hai lần và khách chỉ nhận một email — kể cả khi cùng một job được giao hai lần.
+  Cùng kịch bản chạy qua cả hai trigger (Kafka và DB poll) vì cả hai gọi chung hàm Process.
+preconditions:
+  - Đơn o1 tồn tại ở trạng thái pending, 1500 cent USD, email khách riêng cho namespace này
+  - Cổng thanh toán là mock theo OpenAPI 2024-06-01, trả lần lượt 500, 429 (Retry-After 2s), 201
+  - Job của đơn o1 được giao hai lần (mô phỏng giao trùng)
+vars:
+  customer: "cust-o1+{{ .ns }}@shop.test"
+input:
+  order: { id: o1, customer_email: "{{ .vars.customer }}", amount_cents: 1500, currency: USD, status: pending }
+  job: { id: o1, duplicate: 2 }
+trigger: [kafka, db-poll]
+given:
+  postgres.order: ["{{ .input.order }}"]
+  mock.payment: [500, 429(retry-after=2), 201]
+  job: "{{ .input.job }}"
+expect:
+  - { id: A1, check: postgres.order.o1.status, eq: paid, why: "Đơn phải paid sau khi retry thành công" }
+  - { id: A2, check: mock.payment.calls, eq: 3, why: "2 lần lỗi + 1 lần thành công, không gọi thừa (job trùng không gọi lại)" }
+  - { id: A3, check: mail.to(customer).count, eq: 1, why: "Gửi trùng job vẫn chỉ 1 mail" }
+  - { id: A4, check: mock.payment.idempotency_keys, eq: 1, why: "Cả 3 lần gọi dùng cùng Idempotency-Key nên cổng không thể trừ tiền 2 lần" }
+  - { id: A5, check: mock.payment.schema_errors, eq: 0, why: "Mọi request gửi cổng thanh toán đúng hợp đồng OpenAPI của API thật" }
+  - { id: A6, check: es.order.o1.status, eq: paid, why: "Màn hình tìm kiếm (Elasticsearch) phản ánh trạng thái paid" }
+  - { id: A7, check: kafka.order-events.count(key=o1), eq: 1, why: "Đúng một sự kiện order.paid được phát qua outbox (không mất, không trùng)" }
+evidence:
+  grafana: [payment_calls_total, jobs_total, side_effects_total, latency_since_start, consumer_lag]
+within: 30s
+mutations:
+  - { id: M1, failpoint: no_retry, title: "Tắt retry (lỗi tạm thời bị coi là vĩnh viễn)", expect_red: [A1] }
+  - { id: M2, failpoint: no_idempotency_key, title: "Bỏ Idempotency-Key", expect_red: [A4, A5] }
+  - { id: M3, failpoint: skip_mail_guard, title: "Bỏ chặn gửi mail trùng", expect_red: [A3] }

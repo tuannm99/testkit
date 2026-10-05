@@ -1,0 +1,39 @@
+id: TC-MAIL-001
+title: SMTP lỗi tạm thời (451, ngắt giữa DATA) — mail gửi đúng một lần, các bước trước không bị nhân bản
+requirement: [REQ-262, REQ-261]
+risk: P1
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Máy chủ mail trả 451 rồi ngắt kết nối giữa lúc nhận nội dung. Worker phải thử lại cho tới khi gửi được,
+  khách nhận đúng một mail, và việc xử lý lại job không nhân bản dữ liệu analytics (ClickHouse) hay audit
+  (Mongo).
+preconditions:
+  - Mock SMTP của namespace trả lần lượt 451 ở DATA, ngắt kết nối giữa DATA, rồi chấp nhận
+vars:
+  customer: "cust-m1+{{ .ns }}@shop.test"
+input:
+  order: { id: m1, customer_email: "{{ .vars.customer }}", amount_cents: 990, currency: USD, status: pending }
+  job: { id: m1 }
+trigger: [kafka, db-poll]
+given:
+  postgres.order: ["{{ .input.order }}"]
+  mock.payment: [201]
+  job: "{{ .input.job }}"
+steps:
+  - step: mail.script
+    with: { behaviours: ["451@data", "disconnect@data", "ok"] }
+expect:
+  - { id: A1, check: mail.to(customer).count, eq: 1, why: "Khách nhận đúng một mail" }
+  - { id: A2, check: mail.smtp.sessions, eq: 3, why: "451 và ngắt kết nối đều được thử lại, không bỏ cuộc" }
+  - { id: A3, check: mail.smtp.delivered, eq: 1, why: "Chỉ một phiên SMTP được chấp nhận" }
+  - { id: A4, check: clickhouse.order_event.count(order_id=m1), eq: 1, why: "Ba lần xử lý vẫn chỉ một dòng analytics" }
+  - { id: A5, check: mongo.audit.count(order_id=m1), eq: 1, why: "Ba lần xử lý vẫn chỉ một bản ghi audit (E11000 = đã ghi)" }
+  - { id: A6, check: mock.payment.succeeded, eq: 1, why: "Không trừ tiền lại" }
+evidence:
+  grafana: [jobs_total, side_effects_total]
+within: 30s
+mutations:
+  - { id: M1, failpoint: ch_no_dedup_token, title: "Insert ClickHouse không có deduplication token", expect_red: [A4] }
+  - { id: M2, failpoint: mongo_dup_is_error, title: "Coi E11000 là lỗi", expect_red: [A1] }

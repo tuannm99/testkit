@@ -1,0 +1,24 @@
+id: TC-JOBS-002
+title: Bảng job rỗng — poller giãn nhịp, không busy-loop
+requirement: REQ-241
+risk: P1
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Khi không có job, poller phải giãn nhịp (200ms → tối đa 2s) thay vì truy vấn liên tục làm tốn CPU và
+  tải database.
+preconditions:
+  - Bảng jobs rỗng
+input: {}
+trigger: [db-poll]
+steps:
+  - step: wait.until
+    with: { check: sut.metric(worker_poll_empty_total), gte: 5, within: 20s, why: "poller đã chạy một lúc trên bảng rỗng" }
+expect:
+  - { id: A1, check: sut.metric(worker_poll_empty_total), lte: 12, why: "Có backoff: chỉ vài lần poll trong ~5s (busy-loop sẽ là hàng nghìn lần)" }
+evidence:
+  grafana: [poller, container_cpu]
+within: 10s
+mutations:
+  - { id: M1, failpoint: poll_busy_loop, title: "Bỏ backoff khi bảng rỗng", expect_red: [A1] }

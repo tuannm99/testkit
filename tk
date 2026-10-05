@@ -1,0 +1,91 @@
+#!/bin/sh
+# tk — run the TestKit CLI on a host that only has Docker.
+#
+#   ./tk doctor
+#   ./tk up --services order-worker
+#   ./tk run testkit/suites/release.yaml      # → out/<run_id>.zip
+#   ZEPHYR_TOKEN=... ./tk qc push out/<run_id>
+#   ./tk down
+#
+# The CLI runs in the testkit/runner image (built on first use from
+# testkit/Dockerfile, so no Go toolchain is needed on the host). The project is
+# mounted at the same absolute path as on the host so that bind mounts and
+# build contexts the CLI hands to the Docker engine resolve identically.
+# Commands that talk to the infrastructure (run, report, baseline, ...) join
+# the TestKit network; lifecycle commands (up/down/doctor/status) do not, so
+# that `down` can remove the network.
+set -eu
+
+ROOT=$(cd "$(dirname "$0")" && pwd)
+VERSION=$(sed -n 's/^TESTKIT_VERSION=//p' "$ROOT/infra/compose/versions.env")
+IMAGE="testkit/runner:${VERSION}"
+NETWORK=${TESTKIT_NETWORK:-$(sed -n 's/^network: *\([^ #]*\).*/\1/p' "$ROOT/testkit.yaml")}
+SOCK=${DOCKER_SOCK:-/var/run/docker.sock}
+
+build_args=""
+for v in GO_BUILD_IMAGE BASE_IMAGE DOCKER_CLI_IMAGE; do
+  val=$(sed -n "s/^$v=//p" "$ROOT/infra/compose/versions.env")
+  build_args="$build_args --build-arg $v=$val"
+done
+for v in HTTP_PROXY HTTPS_PROXY NO_PROXY; do
+  eval "val=\${$v:-}"
+  if [ -n "$val" ]; then
+    build_args="$build_args --build-arg $v=$val"
+    case "$val" in *localhost*|*127.0.0.1*) build_args="$build_args --network host" ;; esac
+  fi
+done
+if [ -n "${TESTKIT_BUILD_CA:-}" ]; then
+  build_args="$build_args --secret id=extra_ca,src=$TESTKIT_BUILD_CA"
+fi
+
+# Rebuild the runner whenever the CLI sources changed (never run a stale CLI).
+src_hash=$(cd "$ROOT/testkit" && find . -type f ! -name '*_test.go' ! -path './out/*' -print | LC_ALL=C sort |
+  xargs sha256sum | sha256sum | cut -c1-16)
+have_hash=$(docker image inspect --format '{{index .Config.Labels "testkit.source_hash"}}' "$IMAGE" 2>/dev/null || true)
+if [ "${TK_REBUILD:-0}" = 1 ] || [ "$have_hash" != "$src_hash" ]; then
+  echo "tk: building $IMAGE (sources $src_hash)" >&2
+  # shellcheck disable=SC2086
+  docker build -q -t "$IMAGE" --target runner --label testkit.managed=true --label "testkit.source_hash=$src_hash" \
+    $build_args -f "$ROOT/testkit/Dockerfile" "$ROOT/testkit" >/dev/null
+fi
+
+net_args=""
+in_network=0
+case "${1:-}" in
+  up|down|doctor|status|lint|plan|""|help|--help|-h) ;;
+  *)
+    if docker network inspect "$NETWORK" >/dev/null 2>&1; then
+      net_args="--network $NETWORK"
+      in_network=1
+    fi
+    ;;
+esac
+
+# The QC token variable is the one named in testkit.yaml (qc.token_env).
+TOKEN_ENV=$(sed -n 's/^ *token_env: *\([A-Z_][A-Z0-9_]*\).*/\1/p' "$ROOT/testkit.yaml")
+env_args=""
+for v in $(env | sed -n 's/^\(TESTKIT_[A-Z_]*\|TK_[A-Z0-9_]*\|[A-Z_]*_IMAGE\|HTTPS\?_PROXY\|NO_PROXY\|https\?_proxy\|no_proxy\)=.*/\1/p') $TOKEN_ENV; do
+  case "$v" in TESTKIT_IN_NETWORK) continue ;; esac
+  env_args="$env_args -e $v"
+done
+ca_mount=""
+if [ -n "${TESTKIT_BUILD_CA:-}" ]; then
+  ca_mount="-v $TESTKIT_BUILD_CA:$TESTKIT_BUILD_CA:ro"
+fi
+tty=""
+if [ -t 0 ] && [ -t 1 ]; then tty="-t"; fi
+
+# Run as the calling user so files under out/ stay owned by them; join the
+# group owning the docker socket so the CLI can reach the engine.
+user_args="--user $(id -u):$(id -g) -e HOME=/tmp"
+sock_gid=$(stat -c %g "$SOCK" 2>/dev/null || stat -f %g "$SOCK" 2>/dev/null || echo "")
+if [ -n "$sock_gid" ]; then user_args="$user_args --group-add $sock_gid"; fi
+
+# shellcheck disable=SC2086
+exec docker run --rm -i $tty $user_args \
+  --label testkit.managed=true \
+  -v "$SOCK:/var/run/docker.sock" \
+  -v "$ROOT:$ROOT" -w "$(pwd)" \
+  $ca_mount $net_args $env_args \
+  -e TESTKIT_IN_NETWORK=$in_network -e TESTKIT_IN_CONTAINER=1 \
+  "$IMAGE" "$@"

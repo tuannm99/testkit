@@ -1,0 +1,34 @@
+id: TC-JOBS-003
+title: Job lỗi liên tục dừng ở số lần thử tối đa và chuyển sang dead
+requirement: REQ-242
+risk: P1
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Một job luôn thất bại (cổng thanh toán luôn 500) phải được thử lại có giãn cách đến max_attempts rồi
+  chuyển sang dead, không thử mãi mãi và không làm sai trạng thái đơn.
+preconditions:
+  - Cổng thanh toán luôn trả 500
+  - Worker chỉ thử gọi cổng 2 lần mỗi lần xử lý (PAYMENT_MAX_ATTEMPTS=2); job có max_attempts=5
+vars:
+  customer: "cust-o7+{{ .ns }}@shop.test"
+input:
+  order: { id: o7, customer_email: "{{ .vars.customer }}", amount_cents: 300, currency: USD, status: pending }
+  job: { id: o7 }
+trigger: [db-poll]
+sut:
+  env: { PAYMENT_MAX_ATTEMPTS: "2" }
+given:
+  postgres.order: ["{{ .input.order }}"]
+  mock.payment: [500]
+  job: "{{ .input.job }}"
+expect:
+  - { id: A1, check: postgres.job.o7.status, eq: dead, why: "Hết số lần thử thì dừng ở dead" }
+  - { id: A2, check: postgres.job.o7.attempts, eq: 5, why: "Đúng max_attempts lần, không hơn" }
+  - { id: A3, check: mock.payment.calls, eq: 10, why: "5 lần xử lý × 2 lần gọi mỗi lần" }
+  - { id: A4, check: postgres.order.o7.status, eq: pending, why: "Đơn không bị đánh dấu paid/failed sai" }
+  - { id: A5, check: mail.to(customer).count, eq: 0, why: "Không gửi mail khi chưa thanh toán" }
+evidence:
+  grafana: [jobs_total, payment_calls_total]
+within: 60s

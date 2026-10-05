@@ -1,0 +1,31 @@
+id: TC-CACHE-001
+title: Hoàn tiền qua webhook làm mới cache Redis và chỉ mục tìm kiếm — không còn hiển thị "paid" cũ
+requirement: REQ-263
+risk: P1
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Trạng thái đơn được cache ở Redis cho luồng đọc. Khi nhà cung cấp báo hoàn tiền, cache và Elasticsearch
+  phải được cập nhật; nếu không, người dùng vẫn thấy đơn "paid" đã bị hoàn.
+preconditions:
+  - Đơn c1 đã paid, cache Redis đang giữ "paid"
+input:
+  order: { id: c1, customer_email: "c1+{{ .ns }}@shop.test", amount_cents: 2000, currency: USD, status: paid, payment_ref: ch_c1 }
+  refund: { id: evt_c1, type: charge.refunded, api_version: "2024-06-01", seq: 1, data: { order_id: c1 } }
+given:
+  postgres.order: ["{{ .input.order }}"]
+steps:
+  - step: redis.set
+    with: { key: "order:c1:status", value: paid, ttl: 1h }
+  - step: webhook.send
+    with: { mock: psp, url: "{{ .sut.http }}/webhooks/payment", body: "{{ .input.refund }}" }
+expect:
+  - { id: A1, check: postgres.order.c1.status, eq: refunded, why: "Hoàn tiền được áp dụng" }
+  - { id: A2, check: "redis.key(order:c1:status)", eq: refunded, why: "Cache không còn giữ trạng thái cũ" }
+  - { id: A3, check: es.order.c1.status, eq: refunded, why: "Chỉ mục tìm kiếm phản ánh hoàn tiền" }
+  - { id: A4, check: "redis.ttl(order:c1:status)", gt: 0, why: "Cache vẫn có hạn sống (không thành khóa vĩnh viễn)" }
+evidence: {}
+within: 15s
+mutations:
+  - { id: M1, failpoint: skip_cache_invalidate, title: "Không làm mới cache khi hoàn tiền", expect_red: [A2] }

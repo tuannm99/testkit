@@ -1,0 +1,49 @@
+id: TC-CHAOS-004
+title: Mạng của worker trễ 300ms + mất 5% gói và CPU bị chiếm dụng — vẫn xử lý đủ, đúng một lần
+requirement: REQ-283
+risk: P2
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Mạng kém (tc netem: trễ 300ms, mất 5% gói) trên card mạng của worker đồng thời CPU bị chiếm dụng.
+  Cần quyền NET_ADMIN; máy không có quyền đó sẽ bỏ qua ca này (skipped, không fail).
+preconditions:
+  - Máy chạy cho phép container có CAP_NET_ADMIN (testkit doctor)
+input:
+  orders: 40
+trigger: [kafka]
+chaos:
+  max_recovery: 45s
+given:
+  mock.payment: [201]
+steps:
+  - step: postgres.exec
+    with:
+      sql: >
+        INSERT INTO orders (id, customer_email, amount_cents, currency)
+        SELECT 'N' || g, 'c' || g || '+{{ .ns }}@shop.test', 100 + g, 'USD' FROM generate_series(1, {{ .input.orders }}) g
+  - step: load.start
+    with: { rate: 5, from: 1, to: "{{ .input.orders }}", id_prefix: N }
+  - step: wait.until
+    with: { check: postgres.order.count(status=paid), gte: 5, within: 30s }
+  - step: chaos.netem
+    with: { delay: 300ms, loss: "5" }
+  - step: chaos.stress
+    with: { resource: cpu, workers: 2, duration: 6s }
+  - step: chaos.hold
+    with: { for: 6s }
+  - step: chaos.clear
+  - step: chaos.recover
+    with:
+      within: 60s
+      expect:
+        - { check: kafka.lag(order-worker), lte: 2 }
+  - step: load.wait
+expect:
+  - { id: A1, check: postgres.order.count(status=paid), eq: 40, why: "Không mất" }
+  - { id: A2, check: mock.payment.succeeded, eq: 40, why: "Không trừ tiền trùng" }
+  - { id: A3, check: experiment.recovery_seconds, lte: 45, why: "Phục hồi trong thời gian cho phép" }
+evidence:
+  grafana: [throughput, consumer_lag, container_cpu]
+within: 120s

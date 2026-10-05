@@ -1,0 +1,35 @@
+id: TC-NOTIFY-002
+title: Kết nối half-open (partner im lặng) — heartbeat phát hiện, kết nối lại, không mất thông báo
+requirement: REQ-271
+risk: P1
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Partner giữ kết nối TCP nhưng ngừng đọc và không trả lời (half-open) ngay sau thông báo đầu tiên.
+  Không có lỗi I/O nào xảy ra, nên chỉ heartbeat (không nhận pong trong 3 nhịp) mới phát hiện được.
+  Worker phải kết nối lại và gửi lại thông báo chưa được ack.
+preconditions:
+  - Heartbeat của worker là 500ms (WS_HEARTBEAT)
+  - Partner chuyển sang half-open sau thông báo đầu tiên
+vars:
+  customer: "cust-h+{{ .ns }}@shop.test"
+input:
+  orders:
+    - { id: h1, customer_email: "{{ .vars.customer }}", amount_cents: 100, currency: USD, status: pending }
+    - { id: h2, customer_email: "{{ .vars.customer }}", amount_cents: 200, currency: USD, status: pending }
+trigger: [kafka]
+given:
+  postgres.order: "{{ .input.orders }}"
+  mock.payment: [201]
+  job: [{ id: h1 }, { id: h2 }]
+steps:
+  - step: socket.configure
+    with: { mock: partner, faults: [{ after_messages: 1, action: half_open }] }
+expect:
+  - { id: A1, check: socket.partner.acks, eq: 2, why: "Không mất: cả 2 thông báo được xác nhận sau khi kết nối lại" }
+  - { id: A2, check: socket.partner.connections, gte: 2, why: "Kết nối im lặng được phát hiện và thay thế" }
+evidence: {}
+within: 30s
+mutations:
+  - { id: M1, failpoint: ws_no_heartbeat, title: "Không phát hiện kết nối im lặng", expect_red: [A1] }

@@ -1,0 +1,37 @@
+id: TC-NOTIFY-001
+title: WebSocket bị ngắt đột ngột — gửi lại sau khi kết nối lại, partner nhận đủ, mỗi thông báo xác nhận một lần
+requirement: REQ-270
+risk: P0
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Thông báo cho đối tác qua WebSocket là at-least-once: partner reset kết nối ngay sau khi nhận thông báo
+  thứ hai (chưa kịp ack). Worker phải kết nối lại và gửi lại mọi thông báo chưa được ack; partner nhận đủ
+  3 thông báo khác nhau và ack đúng 3 lần.
+preconditions:
+  - Partner (mock socket) tự ack theo id và trả pong cho ping
+  - Partner reset kết nối ngay sau thông báo thứ 2, trước khi ack
+vars:
+  customer: "cust-n+{{ .ns }}@shop.test"
+input:
+  orders:
+    - { id: n1, customer_email: "{{ .vars.customer }}", amount_cents: 100, currency: USD, status: pending }
+    - { id: n2, customer_email: "{{ .vars.customer }}", amount_cents: 200, currency: USD, status: pending }
+    - { id: n3, customer_email: "{{ .vars.customer }}", amount_cents: 300, currency: USD, status: pending }
+trigger: [kafka]
+given:
+  postgres.order: "{{ .input.orders }}"
+  mock.payment: [201]
+  job: [{ id: n1 }, { id: n2 }, { id: n3 }]
+steps:
+  - step: socket.configure
+    with: { mock: partner, faults: [{ after_messages: 2, action: reset }] }
+expect:
+  - { id: A1, check: socket.partner.acks, eq: 3, why: "Không mất: cả 3 thông báo đều được partner xác nhận" }
+  - { id: A2, check: socket.partner.distinct(type=order.paid), eq: 3, why: "Partner nhận đủ 3 thông báo khác nhau" }
+  - { id: A3, check: socket.partner.connections, gte: 2, why: "Worker đã kết nối lại sau khi bị reset" }
+evidence: {}
+within: 30s
+mutations:
+  - { id: M1, failpoint: ws_no_resend, title: "Không gửi lại thông báo chưa ack sau khi kết nối lại", expect_red: [A1] }

@@ -1,0 +1,34 @@
+# The same draft after review: it now checks what its title claims.
+id: TC-ORDER-030
+title: Cổng thanh toán lỗi 500 một lần rồi thành công — retry giữ nguyên Idempotency-Key
+requirement: REQ-232
+risk: P0
+status: draft
+owner: qc-lead
+service: order-worker
+generated:
+  by: draft-tool
+  at: "2026-10-04T20:00:00Z"
+  sources: [REQ-232]
+purpose: >
+  Khi cổng thanh toán trả 500 một lần, worker thử lại và đơn thành paid; lần thử lại phải dùng
+  cùng Idempotency-Key để cổng không thể trừ tiền hai lần.
+preconditions:
+  - Đơn o30 pending, cổng thanh toán (mock OpenAPI) trả 500 rồi 201
+input:
+  order: { id: o30, customer_email: "cust-o30+{{ .ns }}@shop.test", amount_cents: 3000, currency: USD, status: pending }
+trigger: [kafka]
+given:
+  postgres.order: ["{{ .input.order }}"]
+  mock.payment: [500, 201]
+  job: { id: o30 }
+expect:
+  - { id: A1, check: postgres.order.o30.status, eq: paid, why: "Đơn paid sau khi retry" }
+  - { id: A2, check: mock.payment.calls, eq: 2, why: "1 lần lỗi + 1 lần thành công" }
+  - { id: A3, check: mock.payment.idempotency_keys, eq: 1, why: "Cả 2 lần gọi dùng cùng một Idempotency-Key" }
+  - { id: A4, check: mock.payment.schema_errors, eq: 0, why: "Request đúng hợp đồng OpenAPI (Idempotency-Key là bắt buộc)" }
+evidence:
+  grafana: [payment_calls_total, jobs_total]
+within: 30s
+mutations:
+  - { id: M1, failpoint: no_idempotency_key, title: "Bỏ Idempotency-Key khi gọi cổng thanh toán", expect_red: [A3] }

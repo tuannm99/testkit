@@ -10,6 +10,7 @@ services_dir: testkit/services
 scenarios_dir: testkit/scenarios
 mocks_dir: testkit/mocks             # OpenAPI/specs served to the Mock Hub
 out_dir: out
+baselines_dir: testkit/baselines   # performance baselines, one directory per environment fingerprint
 images:                              # images TestKit builds itself (pinned by TESTKIT_VERSION)
   mockhub:
     context: testkit
@@ -19,3 +20,40 @@ images:                              # images TestKit builds itself (pinned by T
     context: testkit
     dockerfile: testkit/Dockerfile
     target: runner
+  otel-collector:
+    context: testkit
+    dockerfile: testkit/Dockerfile
+    target: otel-collector
+  tkstats:
+    context: testkit
+    dockerfile: testkit/Dockerfile
+    target: tkstats
+  toxiproxy:
+    context: testkit
+    dockerfile: testkit/Dockerfile
+    target: toxiproxy
+  ui-runner:                         # Playwright + the UI tests of ui-tests/ (step ui.run)
+    context: ui-tests
+    dockerfile: ui-tests/Dockerfile
+qc:                                  # handover to QC / test management
+  # files: tool-neutral CSV + Markdown (testcases.*, results.*) in every bundle — the default.
+  # zephyr-scale: also the Zephyr Scale import files and `qc push` (settings below, kept for the port).
+  # Several: "files, zephyr-scale". Override per command with TK_QC_TOOL.
+  tool: files
+  project_key: ORD                   # Jira project key (zephyr-scale)
+  api: https://api.zephyrscale.smartbear.com/v2   # Zephyr Scale Cloud API (zephyr-scale)
+  token_env: ZEPHYR_TOKEN            # token read from this env var at push time, never written anywhere
+  cycle_name: "{{ .suite }} · {{ .run_id }}"
+  folder: /TestKit
+  auto_create_test_cases: false
+ai:                                  # optional assistant: drafts, triage, summaries — never decides a result
+  # none: nothing is sent; `testkit ai ...` writes the redacted prompt for use with any model (--response <file>).
+  # anthropic: Claude via the official SDK (key from $ANTHROPIC_API_KEY or the env var named in api_key_env).
+  # openai-compatible: any model behind <base_url>/chat/completions.  command: any CLI reading stdin (e.g. claude -p).
+  # Only redacted text leaves the machine; every request is recorded (redacted) under ai/requests/ or out/ai/.
+  provider: none
+  model: claude-opus-5-5             # anthropic default; set the model of your endpoint for openai-compatible
+  effort: high
+  # api_key_env: ANTHROPIC_API_KEY
+  # base_url: http://localhost:11434/v1
+  # command: [claude, -p]

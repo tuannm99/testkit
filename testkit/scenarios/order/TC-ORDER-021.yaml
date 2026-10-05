@@ -1,0 +1,41 @@
+id: TC-ORDER-021
+title: SIGKILL khi đang gọi cổng thanh toán — gọi lại dùng cùng Idempotency-Key, đơn vẫn paid một lần
+requirement: REQ-233
+risk: P0
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Tiến trình bị kill -9 khi request thanh toán đang treo (cổng chậm 3s). Job chưa được ack nên được giao
+  lại sau khi khởi động; lần gọi mới phải dùng cùng Idempotency-Key và chỉ một lần trừ tiền thành công.
+preconditions:
+  - Cổng thanh toán trả lời sau 3s cho lần gọi đầu, sau đó trả 201 ngay
+  - Container không có restart policy; bước sut.start khởi động lại thủ công
+  - Kafka chỉ giao lại sau khi phiên consumer cũ hết hạn (KAFKA_SESSION_TIMEOUT=10s cho ca này); DB-poll sau khi lease job hết hạn
+vars:
+  customer: "cust-o4+{{ .ns }}@shop.test"
+input:
+  order: { id: o4, customer_email: "{{ .vars.customer }}", amount_cents: 1000, currency: USD, status: pending }
+  job: { id: o4 }
+trigger: [kafka, db-poll]
+sut:
+  env: { KAFKA_SESSION_TIMEOUT: 10s }
+given:
+  postgres.order: ["{{ .input.order }}"]
+  mock.payment: ["201(delay=3s)", 201]
+  job: "{{ .input.job }}"
+steps:
+  - step: wait.until
+    with: { check: mock.payment.in_flight, eq: 1, within: 20s, why: "request thanh toán đầu tiên đang treo ở cổng" }
+  - step: sut.kill
+  - step: sut.start
+expect:
+  - { id: A1, check: postgres.order.o4.status, eq: paid, why: "Đơn được thanh toán sau khi khởi động lại" }
+  - { id: A2, check: mock.payment.idempotency_keys, eq: 1, why: "Mọi lần gọi (trước và sau crash) cùng một Idempotency-Key" }
+  - { id: A3, check: mock.payment.succeeded, eq: 1, why: "Chỉ một lần trừ tiền thật sự thành công" }
+  - { id: A4, check: mock.payment.calls, gte: 2, why: "Có gọi lại sau crash (lần đầu bị bỏ dở)" }
+  - { id: A5, check: mail.to(customer).count, eq: 1, why: "Một mail duy nhất" }
+  - { id: A6, check: kafka.order-events.count(key=o4), eq: 1, why: "Một sự kiện order.paid duy nhất" }
+evidence:
+  grafana: [jobs_total, payment_calls_total]
+within: 60s

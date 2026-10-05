@@ -1,0 +1,203 @@
+# Service descriptor: everything TestKit needs to know about one service.
+# Adding a service = adding a file like this one. No core change.
+#
+# Values under env: are Go templates rendered per test case, so each case gets
+# its own namespace (database, topics, consumer group, index, mock base URL):
+#   {{ .NS }}  {{ .RunID }}  {{ pgdsn }}  {{ brokers }}  {{ topic "x" }}
+#   {{ group "x" }}  {{ index "x" }}  {{ mock "x" }}  {{ smtp }}  {{ es }}
+apiVersion: testkit/v1
+kind: Service
+name: order-worker
+description: Reference worker — pays orders from Kafka or a DB job table, calls the payment API, writes Postgres (+outbox) and Elasticsearch, mails the customer.
+owner: team-payments
+
+image:
+  name: testkit/reference-worker
+  tag: dev
+  test_tag: dev-failpoint            # built with -tags failpoint (crash / mutation tests)
+  build:
+    context: ../../reference-worker
+    test_args: { GO_TAGS: failpoint }
+
+ports: { http: 8080 }
+health: { port: http, path: /healthz, timeout: 60s }
+metrics: { port: http, path: /metrics }
+
+stores:
+  postgres:
+    migrations: ../../reference-worker/migrations/postgres
+    snapshot: [orders, jobs, outbox, payment_events]
+  kafka:
+    topics:
+      - { name: orders, partitions: 3 }
+      - { name: orders.dlq, partitions: 1 }
+      - { name: order-events, partitions: 3 }
+    groups: [order-worker]
+  elasticsearch:
+    indices:
+      orders: { mappings: ../../reference-worker/es/orders.json }
+      order-history: { mappings: ../../reference-worker/es/order-history.json }
+  clickhouse:
+    migrations: ../../reference-worker/migrations/clickhouse
+    snapshot: [order_events]
+  mongo:
+    snapshot: [audit]
+  redis:
+    snapshot: true
+
+mocks:
+  payment:
+    kind: http
+    openapi: ../mocks/payment.openapi.yaml   # must live under mocks_dir (mounted into the Mock Hub)
+    operation: createCharge
+    api_version: "2024-06-01"
+    verified_at: "2026-10-01"
+    verified_against: docs                  # no provider sandbox: self-faked from the provider's OpenAPI
+    description: Payment gateway (charges, Idempotency-Key required)
+  psp:
+    kind: webhook
+    api_version: "2024-06-01"
+    verified_at: "2026-10-01"
+    verified_against: docs
+    secret: test-only-webhook-secret     # throw-away value, also given to the service
+    description: Payment provider calling back the service (refund events)
+  partner:
+    kind: socket
+    protocol: ws
+    description: Partner receiving order notifications over WebSocket (acks by id, heartbeat ping/pong)
+  mail:
+    kind: smtp
+    description: Customer notification mail (Mock Hub SMTP with fault injection, relayed to Mailpit)
+
+triggers:
+  kafka:
+    topic: orders
+    group: order-worker
+    key: "{{ .job.order_id }}"
+    value: '{"job_id":"{{ .job.id }}","order_id":"{{ .job.order_id }}","enqueued_at":"{{ .now }}"}'
+  db-poll:
+    table: jobs
+    sql: "INSERT INTO jobs (job_key, order_id) VALUES ('{{ .job.id }}', '{{ .job.order_id }}')"
+    drained: "SELECT count(*) FROM jobs WHERE status IN ('queued', 'running')"
+
+entities:
+  order:
+    postgres: { table: orders, key: id }
+    elasticsearch: { table: orders, key: _id }
+  order_history:
+    elasticsearch: { table: order-history, key: _id }
+  order_event:
+    clickhouse: { table: order_events, key: event_id }
+  audit:
+    mongo: { table: audit, key: _id }
+  job:
+    postgres: { table: jobs, key: job_key }
+  payment_event:
+    postgres: { table: payment_events, key: event_id }
+
+failpoints:
+  no_retry: payment errors are treated as permanent (retry disabled)
+  no_idempotency_key: the Idempotency-Key header is not sent
+  skip_paid_check: an already paid order is charged again
+  skip_mail_guard: the at-most-once mail guard is bypassed
+  crash_after_db_commit: the process exits right after the paid transaction commits
+  commit_before_process: Kafka offset committed before processing
+  es_ignore_bulk_errors: _bulk item errors (HTTP 200, errors=true) are ignored
+  use_worker_clock: job due time compared with the worker clock instead of the DB clock
+  poll_busy_loop: the poller does not back off when the job table is empty
+  ch_no_dedup_token: ClickHouse inserts without insert_deduplication_token (retries duplicate rows)
+  mongo_dup_is_error: Mongo duplicate key (E11000, already recorded) is treated as a failure
+  skip_cache_invalidate: the Redis status cache is not refreshed when a refund arrives
+  ws_no_resend: unacked notifications are not resent after a reconnect
+  ws_no_heartbeat: a silent (half-open) WebSocket connection is never detected
+  outage_is_failure: a store outage (database unreachable) consumes delivery attempts and can dead-letter the job
+
+env:
+  SERVICE_NAME: order-worker
+  TESTKIT_RUN_ID: "{{ .RunID }}"
+  HTTP_ADDR: ":8080"
+  DATABASE_URL: "{{ pgdsn }}"
+  TRIGGERS: kafka,dbpoll
+  KAFKA_BROKERS: "{{ brokers }}"
+  KAFKA_TOPIC: '{{ topic "orders" }}'
+  KAFKA_GROUP: '{{ group "order-worker" }}'
+  KAFKA_DLQ_TOPIC: '{{ topic "orders.dlq" }}'
+  OUTBOX_TOPIC: '{{ topic "order-events" }}'
+  PAYMENT_URL: '{{ mock "payment" }}'
+  PAYMENT_MAX_BACKOFF: 5s
+  ES_URL: "{{ es }}"
+  ES_INDEX: '{{ index "orders" }}'
+  SMTP_ADDR: "{{ smtpmock }}"
+  MAIL_FROM: "orders+{{ .NS }}@shop.test"       # the Mock Hub SMTP server reads the namespace from it
+  ES_HISTORY_INDEX: '{{ index "order-history" }}'
+  CH_URL: "{{ ch }}"
+  CH_DATABASE: "{{ database }}"
+  CH_USER: "{{ chuser }}"
+  CH_PASSWORD: "{{ chpass }}"
+  MONGO_URI: "{{ mongo }}"
+  MONGO_DB: "{{ database }}"
+  REDIS_ADDR: "{{ redis }}"
+  REDIS_PREFIX: "{{ keyprefix }}"
+  PARTNER_WS_URL: '{{ mocksocket "partner" }}'
+  WS_HEARTBEAT: 500ms
+  POLL_LEASE: 6s
+  ORDER_LEASE: 10s
+  WEBHOOK_SECRET: '{{ mocksecret "psp" }}'
+
+# Trigger perf executor: how to create the business objects of a batch of job
+# ids and how to read when each one completed (end-to-end latency per job).
+perf:
+  fixture: >
+    INSERT INTO orders (id, customer_email, amount_cents, currency)
+    SELECT '{{ .prefix }}' || g, 'p' || g || '+{{ .ns }}@shop.test', 100 + g, 'USD' FROM generate_series({{ .from }}, {{ .to }}) g
+  completion: >
+    SELECT id, extract(epoch FROM updated_at) AS done FROM orders WHERE status = 'paid' AND id LIKE '{{ .prefix }}%'
+
+# Dependencies a case may route through Toxiproxy (chaos.proxies in the case).
+# {{ proxy }} is the toxiproxy:<port> allocated for the execution.
+chaos:
+  proxies:
+    postgres:
+      upstream: postgres:5432
+      env: { DATABASE_URL: "postgres://{{ pguser }}:{{ pgpass }}@{{ proxy }}/{{ database }}?sslmode=disable" }
+    payment:
+      upstream: mockhub:8081
+      env: { PAYMENT_URL: "http://{{ proxy }}/ns/{{ .NS }}/payment" }
+    redis:
+      upstream: redis:6379
+      env: { REDIS_ADDR: "{{ proxy }}" }
+    elasticsearch:
+      upstream: elasticsearch:9200
+      env: { ES_URL: "http://{{ proxy }}" }
+
+# Cross-store consistency checked by `reconcile.<name>.*` and written as evidence.
+reconcile:
+  paid_orders:
+    description: Every paid order exists once in Postgres, the search index, the history index, analytics and the audit log
+    sources:
+      - { store: postgres, sql: "SELECT id FROM orders WHERE status IN ('paid', 'refunded')" }
+      - { store: elasticsearch, index: orders, field: order_id }
+      - { store: elasticsearch, index: order-history, term: { status: paid }, field: order_id }
+      - { store: clickhouse, sql: "SELECT order_id FROM order_events WHERE type = 'order.paid'" }
+      - { store: mongo, collection: audit, filter: { type: order.paid }, field: order_id }
+
+# Evidence panels: name -> Grafana panel. Raw data is fetched with the panel's
+# own queries (variables interpolated), so image and numbers always match.
+panels:
+  throughput:       { dashboard: tk-order-worker, panel_id: 1 }
+  error_rate:       { dashboard: tk-order-worker, panel_id: 2 }
+  p95_latency:      { dashboard: tk-order-worker, panel_id: 3 }
+  e2e_latency:      { dashboard: tk-order-worker, panel_id: 4 }
+  payment_calls:    { dashboard: tk-order-worker, panel_id: 5 }
+  payment_latency:  { dashboard: tk-order-worker, panel_id: 6 }
+  in_flight:        { dashboard: tk-order-worker, panel_id: 7 }
+  poller:           { dashboard: tk-order-worker, panel_id: 8 }
+  # cumulative panels: the right evidence for short functional cases
+  payment_calls_total: { dashboard: tk-order-worker, panel_id: 9 }
+  jobs_total:          { dashboard: tk-order-worker, panel_id: 10 }
+  latency_since_start: { dashboard: tk-order-worker, panel_id: 11 }
+  side_effects_total:  { dashboard: tk-order-worker, panel_id: 12 }
+  container_cpu:    { dashboard: tk-run, panel_id: 1 }
+  container_memory: { dashboard: tk-run, panel_id: 2 }
+  consumer_lag:     { dashboard: tk-run, panel_id: 3 }
+  log_levels:       { dashboard: tk-run, panel_id: 5 }

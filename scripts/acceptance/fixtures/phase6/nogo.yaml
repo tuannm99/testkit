@@ -1,0 +1,8 @@
+# A suite that must be NO-GO: it runs the weak drafted case of Phase 5,
+# whose mutation survives (the case does not catch the defect it claims to).
+kind: Suite
+suite: nogo-demo
+cases: [../phase5/TC-ORDER-030.weak.yaml]
+only_approved: false
+mutations: true
+pack: false

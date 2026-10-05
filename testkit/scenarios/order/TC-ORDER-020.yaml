@@ -1,0 +1,38 @@
+id: TC-ORDER-020
+title: Crash ngay sau khi commit DB — xử lý lại hoàn tất phần còn lại, không trừ tiền lần hai
+requirement: REQ-233
+risk: P0
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Tiến trình chết đúng lúc vừa commit "paid" vào Postgres, trước khi index Elasticsearch, gửi mail và
+  ack job (failpoint crash_after_db_commit). Sau khi khởi động lại, job được giao lại (Kafka chưa commit
+  offset / DB-poll cứu job hết lease) và các bước còn thiếu phải được hoàn tất đúng một lần.
+preconditions:
+  - Image test (build tag failpoint) chạy với TK_FAILPOINTS=crash_after_db_commit=once
+  - Container có restart policy on-failure (mô phỏng orchestrator khởi động lại pod)
+  - Đơn o3 pending; cổng thanh toán trả 201
+vars:
+  customer: "cust-o3+{{ .ns }}@shop.test"
+input:
+  order: { id: o3, customer_email: "{{ .vars.customer }}", amount_cents: 4200, currency: EUR, status: pending }
+  job: { id: o3 }
+trigger: [kafka, db-poll]
+failpoints: [crash_after_db_commit=once]
+sut: { restart: "on-failure:3" }
+given:
+  postgres.order: ["{{ .input.order }}"]
+  mock.payment: [201]
+  job: "{{ .input.job }}"
+expect:
+  - { id: A1, check: "sut.log(failpoint: crashing after db commit).count", eq: 1, why: "Tiến trình thực sự đã chết đúng sau commit DB (bằng chứng trong log)" }
+  - { id: A2, check: sut.restarts, eq: 1, why: "Container được khởi động lại đúng một lần" }
+  - { id: A3, check: postgres.order.o3.status, eq: paid, why: "Trạng thái đã commit trước crash vẫn đúng" }
+  - { id: A4, check: mock.payment.succeeded, eq: 1, why: "Xử lý lại sau crash không trừ tiền lần hai" }
+  - { id: A5, check: es.order.o3.status, eq: paid, why: "Bước index bị bỏ dở do crash được hoàn tất khi job được giao lại" }
+  - { id: A6, check: mail.to(customer).count, eq: 1, why: "Mail bị bỏ dở được gửi đúng một lần" }
+  - { id: A7, check: kafka.order-events.count(key=o3), eq: 1, why: "Sự kiện outbox đã commit cùng DB vẫn được phát, đúng một lần (không mất, không ma)" }
+evidence:
+  grafana: [jobs_total, side_effects_total, payment_calls_total]
+within: 45s

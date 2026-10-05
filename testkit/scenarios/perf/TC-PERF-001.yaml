@@ -1,0 +1,33 @@
+id: TC-PERF-001
+title: Tải ổn định 20 job/s qua Kafka — độ trễ end-to-end, thông lượng, so với baseline
+requirement: REQ-290
+risk: P1
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Đo hiệu năng pipeline thanh toán ở tải cố định 20 job/s (open model: job tới đúng nhịp bất kể worker
+  nhanh hay chậm), sau 5s warm-up. Độ trễ của từng job = lúc đơn thành "paid" trong DB − lúc máy tạo tải
+  phát job. Lặp 3 lần để so sánh thống kê với baseline cùng môi trường.
+preconditions:
+  - Cổng thanh toán (mock) trả lời sau 20ms
+  - Máy tạo tải (TestKit runner) không bị nghẽn (đo bằng số job phát trễ và CPU của chính nó)
+input: {}
+trigger: [kafka]
+given:
+  mock.payment: ["201(delay=20ms)"]
+perf:
+  kind: load
+  executor: trigger
+  warmup: 5s
+  stages: [{ rate: 20, duration: 20s }]
+  repeat: 3
+  id_prefix: PF
+  thresholds: { p95_ms: 1500, error_rate: 0.01, min_throughput: 15, max_dropped: 0 }
+  baseline: { key: order-pipeline-20rps, max_regression: 10% }
+expect:
+  - { id: A1, check: reconcile.paid_orders.mismatches, eq: 0, why: "Dưới tải, mọi đơn có mặt đúng một lần ở mọi kho" }
+  - { id: A2, check: kafka.topic(orders.dlq).count, eq: 0, why: "Không job nào bị đẩy vào DLQ dưới tải" }
+evidence:
+  grafana: [throughput, e2e_latency, p95_latency, consumer_lag, container_cpu]
+within: 60s

@@ -5,3 +5,4 @@
 node_modules/
 /ui-tests/test-results/
 /ui-tests/playwright-report/
+__pycache__/

@@ -1,0 +1,49 @@
+id: TC-CHAOS-003
+title: Tiến trình bị đóng băng 3s (docker pause) — không mất, không trùng sau khi tiếp tục
+requirement: REQ-282
+risk: P1
+status: approved
+owner: qc-lead
+service: order-worker
+purpose: >
+  Tiến trình worker bị đóng băng (GC dài, node quá tải, docker pause) giữa lúc đang xử lý; khi tiếp tục,
+  mọi job phải hoàn tất đúng một lần.
+preconditions:
+  - 60 đơn, job qua DB poll 10/s
+input:
+  orders: 60
+trigger: [db-poll]
+chaos:
+  max_recovery: 30s
+given:
+  mock.payment: ["201(delay=50ms)"]
+steps:
+  - step: postgres.exec
+    with:
+      sql: >
+        INSERT INTO orders (id, customer_email, amount_cents, currency)
+        SELECT 'Z' || g, 'c' || g || '+{{ .ns }}@shop.test', 100 + g, 'USD' FROM generate_series(1, {{ .input.orders }}) g
+  - step: load.start
+    with: { rate: 10, from: 1, to: "{{ .input.orders }}", id_prefix: Z }
+  - step: wait.until
+    with: { check: postgres.order.count(status=paid), gte: 10, within: 30s }
+  - step: chaos.container
+    with: { target: sut, action: pause }
+  - step: chaos.hold
+    with: { for: 3s }
+  - step: chaos.container
+    with: { target: sut, action: unpause }
+  - step: chaos.recover
+    with:
+      within: 60s
+      expect:
+        - { check: postgres.job.count(status=queued), lte: 2 }
+  - step: load.wait
+expect:
+  - { id: A1, check: postgres.order.count(status=paid), eq: 60, why: "Không mất" }
+  - { id: A2, check: mock.payment.succeeded, eq: 60, why: "Không trừ tiền trùng" }
+  - { id: A3, check: postgres.job.count(status=done), eq: 60, why: "Mọi job hoàn tất" }
+  - { id: A4, check: experiment.recovery_seconds, lte: 30, why: "Phục hồi trong thời gian cho phép" }
+evidence:
+  grafana: [throughput, jobs_total, poller]
+within: 90s

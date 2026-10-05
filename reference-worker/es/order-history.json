@@ -1,0 +1,15 @@
+{
+  "settings": { "number_of_shards": 1, "number_of_replicas": 0 },
+  "mappings": {
+    "dynamic": "strict",
+    "properties": {
+      "order_id":       { "type": "keyword" },
+      "status":         { "type": "keyword" },
+      "amount_cents":   { "type": "long" },
+      "currency":       { "type": "keyword" },
+      "customer_email": { "type": "keyword" },
+      "payment_ref":    { "type": "keyword" },
+      "updated_at":     { "type": "date" }
+    }
+  }
+}

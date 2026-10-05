@@ -1,0 +1,9 @@
+{
+  "name": "testkit-ui-tests",
+  "private": true,
+  "description": "UI tests run by TestKit (step ui.run) inside the pinned Playwright image",
+  "scripts": { "test": "playwright test" },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

@@ -1,0 +1,45 @@
+# Drafted by command/claude-cli — status draft: review, then `testkit admit --approve --by <name>` (mutation gate) before it can run in a release.
+id: TC-DRAFT-001
+title: Job thanh toán bị giao trùng 3 lần — chỉ trừ tiền 1 lần, đơn paid, khách nhận 1 email
+requirement: REQ-TBD
+risk: P1
+status: draft
+service: order-worker
+purpose: >
+  Cùng một job thanh toán bị giao 3 lần (ví dụ producer retry). Worker chỉ được trừ tiền đúng một lần và chuyển đơn sang paid. Cổng thanh toán chỉ ghi nhận 1 lần trừ tiền thành công, và khách chỉ nhận đúng 1 email.
+
+preconditions:
+  - Đơn d1 ở trạng thái pending, chưa từng được trừ tiền
+  - Cổng thanh toán (mock payment) luôn trả 201 nên mỗi lần gọi thừa đều bị đếm là một lần trừ tiền thành công
+  - Job d1 chỉ được giao qua bước trigger.enqueue (duplicate 3), không khai báo job trong given để tránh giao thêm
+vars:
+  customer: "cust-d+{{ .ns }}@shop.test"
+input:
+  orders:
+    - {id: d1, customer_email: "{{ .vars.customer }}", amount_cents: 100, currency: USD, status: pending}
+trigger: [kafka]
+given:
+  postgres.order: "{{ .input.orders }}"
+  mock.payment: [201]
+steps:
+  - step: trigger.enqueue
+    with: {id: d1, duplicate: 3}
+  - step: trigger.drain
+    with: {timeout: 20s}
+  - step: wait.until
+    with: {check: postgres.order.d1.status, eq: paid, within: 20s, why: "đơn phải chuyển sang paid sau khi job được xử lý"}
+expect:
+  - {id: A1, check: postgres.order.d1.status, eq: paid, why: "Đơn được chuyển sang paid dù job bị giao trùng"}
+  - {id: A2, check: mock.payment.calls, eq: 1, why: "Cổng thanh toán chỉ bị gọi 1 lần: 2 lần giao trùng không được tạo thêm lần trừ tiền"}
+  - {id: A3, check: mock.payment.succeeded, eq: 1, why: "Chỉ có đúng 1 lần trừ tiền thành công, khách không bị trừ tiền nhiều lần"}
+  - {id: A4, check: mail.to(customer).count, eq: 1, why: "Khách nhận đúng 1 email xác nhận dù job được giao 3 lần"}
+evidence:
+  grafana: [payment_calls_total, jobs_total, side_effects_total]
+within: 40s
+mutations:
+  - {id: M1, failpoint: skip_paid_check, title: "Đơn đã paid vẫn bị trừ tiền lại khi job giao trùng", expect_red: [A2]}
+generated:
+  at: "2026-10-05T03:31:01Z"
+  by: command/claude-cli
+  sources:
+    - requirement (command line)

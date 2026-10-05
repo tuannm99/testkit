@@ -1,0 +1,29 @@
+# Release suite: what QC signs off. `./tk run testkit/suites/release.yaml`
+# runs it, decides GO / NO-GO from the gate below (hard rules only), writes
+# the Zephyr Scale import files and packs out/<run_id>.zip.
+kind: Suite
+suite: release
+title: Order pipeline — bộ kiểm thử release
+cases:                      # relative to this file
+  - ../scenarios/order
+  - ../scenarios/jobs
+  - ../scenarios/webhook
+  - ../scenarios/search
+  - ../scenarios/mail
+  - ../scenarios/cache
+  - ../scenarios/notify
+  - ../scenarios/ui
+  - ../scenarios/chaos
+  - ../scenarios/perf
+only_approved: true         # drafts (e.g. TC-PERF-901, the regression demo) are skipped and listed
+mutations: true             # counter-evidence: every case must go red with the defect it targets
+retries: 1                  # a failure that passes on retry is flaky: NO-GO unless quarantined
+parallel: 4
+pack: true
+requirements: [REQ-231, REQ-232, REQ-233, REQ-234, REQ-240, REQ-241, REQ-242, REQ-243, REQ-250,
+  REQ-260, REQ-261, REQ-262, REQ-263, REQ-270, REQ-271, REQ-280, REQ-281, REQ-282, REQ-283, REQ-290, REQ-291]
+gate:
+  # A host without a declared privilege (e.g. netem for TC-CHAOS-004) skips
+  # those cases; they and their requirements are listed as not verified here.
+  allow_skipped_capability: true
+quarantine: []              # [{case, reason, owner, deadline: YYYY-MM-DD, ticket}]
