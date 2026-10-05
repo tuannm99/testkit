@@ -205,6 +205,7 @@ type PerfComparison struct {
 	PValue     float64   `json:"p_value"`
 	Allowed    float64   `json:"allowed_pct"`
 	Regression bool      `json:"regression"`
+	Stale      bool      `json:"stale_baseline,omitempty"` // much better than the baseline: record a new one
 	Verdict    string    `json:"verdict"`
 	Baseline   []float64 `json:"baseline_samples"`
 	Current    []float64 `json:"current_samples"`

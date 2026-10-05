@@ -157,7 +157,7 @@ details summary{cursor:pointer;color:var(--acc)}
 <table><tr><th>Chỉ số</th><th>Baseline (median, mẫu)</th><th>Lần này (median, mẫu)</th><th>Mức thay đổi</th><th>p</th><th>Kết luận</th></tr>
 {{range .Comparisons}}<tr><td>{{.Metric}}</td><td class="num">{{num .BaseMedian}}<div class="ev">{{range .Baseline}}{{num .}} {{end}}</div></td>
 <td class="num">{{num .CurMedian}}<div class="ev">{{range .Current}}{{num .}} {{end}}</div></td><td class="num">{{worse .ChangePct}}</td><td class="num">{{printf "%.3f" .PValue}}</td>
-<td><span class="pill {{if .Regression}}bad{{else}}ok{{end}}">{{if .Regression}}regression{{else}}không regression{{end}}</span> <span class="ev">{{.Verdict}}</span></td></tr>{{end}}
+<td><span class="pill {{if .Regression}}bad{{else}}ok{{end}}">{{if .Regression}}regression{{else}}không regression{{end}}</span>{{if .Stale}} <span class="pill err">baseline có thể đã cũ</span>{{end}} <span class="ev">{{.Verdict}}</span></td></tr>{{end}}
 </table>{{end}}
 {{if .Note}}<p class="muted">{{.Note}}</p>{{end}}
 <p class="muted">Tải theo open model (tốc độ đến cố định), warm-up không tính vào phép đo; "late" = số job máy tạo tải phát trễ (máy tạo tải bị nghẽn). Số liệu thô: <a href="{{.Dir}}/summary.json">summary.json</a>.</p>

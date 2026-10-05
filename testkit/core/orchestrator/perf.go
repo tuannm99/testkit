@@ -326,7 +326,7 @@ func (e *execution) baseline(c *scenario.Case, pr *result.PerfResult, now time.T
 	for _, m := range metrics {
 		cmp := perf.Compare(m, bl.Samples[m], pr.Samples[m], b.MaxRegressionRatio())
 		pr.Comparisons = append(pr.Comparisons, result.PerfComparison{Metric: m, BaseMedian: cmp.BaseMedian, CurMedian: cmp.CurMedian,
-			ChangePct: cmp.ChangePct, PValue: cmp.PValue, Allowed: cmp.Allowed, Regression: cmp.Regression, Verdict: cmp.Verdict,
+			ChangePct: cmp.ChangePct, PValue: cmp.PValue, Allowed: cmp.Allowed, Regression: cmp.Regression, Stale: cmp.Stale, Verdict: cmp.Verdict,
 			Baseline: cmp.Baseline, Current: cmp.Current})
 		o := assert.Outcome{ID: "BASE-" + m, Check: "baseline." + b.Key + "." + m, Operator: "lte",
 			Expected: fmt.Sprintf("tệ đi không quá %.0f%% so với baseline (median %.6g)", cmp.Allowed, cmp.BaseMedian), Actual: fmt.Sprintf("%.6g (tệ đi %+.1f%%, p=%.3f)", cmp.CurMedian, cmp.ChangePct, cmp.PValue),

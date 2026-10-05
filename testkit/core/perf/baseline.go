@@ -114,7 +114,11 @@ type Comparison struct {
 	Regression   bool      `json:"regression"`   // worse by more than allowed AND significant
 	Significant  bool      `json:"significant"`  // p < Alpha
 	Insufficient bool      `json:"insufficient"` // fewer than 3 samples on a side: median rule only
-	Verdict      string    `json:"verdict"`
+	// Stale: significantly better than the baseline by more than twice the
+	// allowed ratio. The baseline no longer describes the system, and a real
+	// regression back towards it would go unnoticed: record a new one.
+	Stale   bool   `json:"stale_baseline"`
+	Verdict string `json:"verdict"`
 }
 
 // Alpha is the significance level of the regression test.
@@ -148,6 +152,16 @@ func Compare(metric string, base, cur []float64, allowed float64) Comparison {
 		c.Verdict = fmt.Sprintf("worse by %.1f%% but not significant (p=%.3f ≥ %.2f): not a regression", c.ChangePct, c.PValue, Alpha)
 	default:
 		c.Verdict = fmt.Sprintf("within %.0f%% of the baseline (%+.1f%% in the worse direction, p=%.3f)", allowed*100, c.ChangePct, c.PValue)
+	}
+	var pBetter float64
+	if HigherIsWorse(metric) {
+		_, pBetter = MannWhitneyGreater(cur, base)
+	} else {
+		_, pBetter = MannWhitneyGreater(base, cur)
+	}
+	if !c.Insufficient && -c.ChangePct > 2*allowed*100 && pBetter < Alpha {
+		c.Stale = true
+		c.Verdict += fmt.Sprintf(" — better by %.1f%% (p=%.3f): the baseline looks stale, record a new one", -c.ChangePct, pBetter)
 	}
 	if c.Insufficient {
 		c.Verdict += " — fewer than 3 samples on a side: decided on medians only"

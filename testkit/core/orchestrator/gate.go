@@ -89,16 +89,23 @@ func Gate(run *result.Run, s *scenario.Suite, cases []*scenario.Case, today time
 	}
 	add("cùng kết quả qua mọi trigger", "khớp", len(mismatch) == 0, orNone(mismatch))
 
-	var regress []string
+	var regress, stale []string
 	for _, p := range run.Perf {
 		for _, c := range p.Comparisons {
 			if c.Regression {
 				regress = append(regress, fmt.Sprintf("%s %s tệ đi %.1f%% (p=%.3f)", p.ID, c.Metric, c.ChangePct, c.PValue))
 			}
+			if c.Stale {
+				stale = append(stale, fmt.Sprintf("%s %s", p.ID, c.Metric))
+			}
 		}
 	}
 	if len(run.Perf) > 0 {
-		add("không regression hiệu năng so với baseline", "0", len(regress) == 0, orNone(regress))
+		detail := orNone(regress)
+		if len(stale) > 0 {
+			detail += "; cảnh báo: tốt hơn baseline rõ rệt, baseline có thể đã cũ (ghi lại baseline): " + strings.Join(stale, ", ")
+		}
+		add("không regression hiệu năng so với baseline", "0", len(regress) == 0, detail)
 	}
 
 	if len(s.Requirements) > 0 {
