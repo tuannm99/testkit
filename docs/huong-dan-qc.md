@@ -53,3 +53,22 @@ Testcase mới (viết tay hoặc do công cụ soạn) ở trạng thái `draft
     ./tk admit --approve --by <tên QC> testkit/scenarios/.../TC-XXX.yaml
 
 Lệnh chỉ cho duyệt khi case xanh ổn định và đỏ với mọi lỗi được khai báo; người duyệt là người ký.
+
+## 6. Trợ lý AI (tuỳ chọn)
+
+AI chỉ **gợi ý** — không bao giờ quyết định pass/fail hay cổng release. Mọi thứ gửi cho mô hình đều đã
+che (secret, email, số thẻ, số điện thoại/giấy tờ, token...) và bị chặn nếu còn sót; bản đã gửi được lưu lại
+trong `ai/requests/` để kiểm tra.
+
+    ./tk ai context out/<run_id> --task triage     # xem đúng nội dung sẽ gửi (đã che), không gửi gì
+    ./tk ai triage out/<run_id>                    # gợi ý nguyên nhân cho case đỏ / flaky / yếu → ai/triage.md
+    ./tk ai summary out/<run_id>                   # bản tóm tắt cho người ký → ai/summary.md
+    ./tk ai draft --service order-worker --req-id REQ-300 --requirement "..."   # soạn nháp testcase
+
+- Chọn mô hình trong `testkit.yaml` → `ai:` (Claude, mô hình bất kỳ có API kiểu OpenAI, hoặc một lệnh như
+  `claude -p`). Mặc định `none`: không gửi gì; lệnh ghi ra prompt đã che để dán vào bất kỳ mô hình nào, rồi
+  đưa câu trả lời lại bằng `--response <tệp>`.
+- Báo cáo có mục "Gợi ý của AI (tham khảo)" đặt cạnh phân loại theo luật; bằng chứng AI trích được kiểm tra
+  tồn tại, trích sai bị loại và ghi chú.
+- Testcase do AI soạn luôn là `draft`, chưa có người phụ trách, yêu cầu `REQ-TBD` nếu không chỉ định; phải qua
+  `./tk admit` (đỏ đúng với lỗi được cài) và người duyệt `--approve --by <tên>` mới vào được release.

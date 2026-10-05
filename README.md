@@ -40,6 +40,15 @@ Release (what QC signs off — see `docs/huong-dan-qc.md`):
 ./tk qc cases                               # out/qc/testcases.csv + .md (tool-neutral)
                                             # each bundle has qc/results.csv + .md and qc/testcases.csv + .md
 ZEPHYR_TOKEN=... ./tk qc push out/<run_id>  # optional, with qc.tool: files, zephyr-scale
+```
+
+Optional AI assistant (advisory only, redacted data only — `ai:` in `testkit.yaml`; agents read `AGENTS.md`):
+
+```sh
+./tk ai context out/<run_id> --task triage  # exactly what would be sent (redacted); sends nothing
+./tk ai triage out/<run_id>                 # suggested causes for red / flaky / weak cases → ai/triage.md
+./tk ai summary out/<run_id>                # sign-off summary (facts by TestKit) → ai/summary.md
+./tk ai draft --service <svc> --req-id <REQ> --requirement "..."   # draft case → lint → admit by a person
 ./tk pack out/<run_id>                      # re-pack: checks the manifest and that no secret is inside
 ```
 
