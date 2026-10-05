@@ -97,6 +97,10 @@ func Admit(run *result.Run, cases []*scenario.Case, stability int) []*result.Adm
 					case !ok:
 						mr.OK = false
 						details = append(details, label+" not run")
+					case r.Result == result.Error:
+						mr.OK = false
+						details = append(details, fmt.Sprintf("%s NOT EVALUATED (the mutation run errored: fix the case or the environment and admit again)", label))
+						mr.Evidence = append(mr.Evidence, path.Join(r.Dir, "case.json"))
 					case !r.Killed:
 						mr.OK = false
 						details = append(details, fmt.Sprintf("%s SURVIVED (%s; red: %v, required: %v)", label, r.Result, r.RedIDs, r.Expected))

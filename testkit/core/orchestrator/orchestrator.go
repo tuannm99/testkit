@@ -708,7 +708,14 @@ func (e *execution) applyStep(ctx context.Context, s kit.Step, within time.Durat
 		}
 		dctx, cancel := context.WithTimeout(ctx, kit.Dur(s.With, "timeout", within))
 		defer cancel()
-		return kit.Result{}, e.trigger.Drain(dctx)
+		err := e.trigger.Drain(dctx)
+		if err != nil && dctx.Err() != nil && ctx.Err() == nil {
+			// Jobs still pending when the time is up: the service did not
+			// finish its work. That is behaviour to judge by the assertions
+			// (as for the drain at the end of every case), not an environment failure.
+			return kit.Result{Note: "not drained in time, assertions decide: " + err.Error()}, nil
+		}
+		return kit.Result{}, err
 	case "assert.during":
 		// The expectations must hold continuously for `for` (observed, not slept).
 		exps, err := inlineExpectations(s)
