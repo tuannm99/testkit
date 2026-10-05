@@ -9,6 +9,18 @@ Everything is declared in files (services, scenarios, infrastructure,
 thresholds), everything runs on Docker, and pass/fail is decided by hard
 rules (assertions, SLO thresholds) — never by an AI.
 
+## Documentation
+
+| Document | For |
+|---|---|
+| [docs/huong-dan-su-dung.md](docs/huong-dan-su-dung.md) | User guide (Vietnamese): install, run, read results, write cases, perf/chaos/UI, release, CI, troubleshooting |
+| [docs/tham-chieu-testcase.md](docs/tham-chieu-testcase.md) | Test case reference: fields, `given`, steps, checks, operators, templates, mutations, suites and the gate |
+| [docs/tham-chieu-service.md](docs/tham-chieu-service.md) | Service descriptor reference: image, stores, mocks, triggers, entities, failpoints, env, chaos, reconcile, panels |
+| [docs/tham-chieu-cau-hinh.md](docs/tham-chieu-cau-hinh.md) | Configuration reference: `testkit.yaml` (qc, ai), env files, environment variables, every CLI command |
+| [docs/huong-dan-qc.md](docs/huong-dan-qc.md) | QC: run the release, read the report, hand over results |
+| [AGENTS.md](AGENTS.md) | Rules and workflows for AI agents |
+| [docs/assumptions.md](docs/assumptions.md), [docs/phases/](docs/phases/) | Design decisions and the build log of each phase |
+
 ## Quick start (host with only Docker)
 
 ```sh

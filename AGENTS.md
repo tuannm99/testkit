@@ -30,6 +30,12 @@ the deterministic rules of TestKit decide pass/fail; agents draft, run, explain 
 8. Missing privilege (NET_ADMIN, netem, docker.sock) → the case is skipped and reported, never "fixed" by
    removing the requirement.
 
+## Documentation to read
+
+User guide `docs/huong-dan-su-dung.md`; exact syntax in `docs/tham-chieu-testcase.md` (cases, steps, checks,
+operators, suites), `docs/tham-chieu-service.md` (service descriptors) and `docs/tham-chieu-cau-hinh.md`
+(configuration, environment variables, commands). These are in Vietnamese; `./tk steps` prints the vocabulary.
+
 ## Repository map
 
 ```

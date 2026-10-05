@@ -1,4 +1,6 @@
-# Hướng dẫn cho QC: chạy release, đọc bằng chứng, đưa vào Jira (Zephyr Scale)
+# Hướng dẫn cho QC: chạy release, đọc bằng chứng, bàn giao kết quả
+
+> Cài đặt, viết testcase, xử lý sự cố: xem [huong-dan-su-dung.md](huong-dan-su-dung.md).
 
 Máy chạy chỉ cần Docker. Mọi lệnh chạy từ thư mục gốc của repo.
 
