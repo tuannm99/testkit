@@ -181,6 +181,9 @@ func newQCCmd(g *globals) *cobra.Command {
 			var tokenEnv string
 			if p.QC != nil {
 				tokenEnv = p.QC.TokenEnv
+				if api := os.Getenv("TK_QC_API"); api != "" {
+					p.QC.API = api // e.g. a Zephyr Scale Data Center URL, or a test double
+				}
 			}
 			body, err := zephyr.Push(cmd.Context(), args[0], p.QC, os.Getenv(tokenEnv), nil)
 			if err != nil {

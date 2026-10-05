@@ -3,7 +3,8 @@
 #
 #   ./tk doctor
 #   ./tk up --services order-worker
-#   ./tk run testkit/scenarios/release.yaml
+#   ./tk run testkit/suites/release.yaml      # → out/<run_id>.zip
+#   ZEPHYR_TOKEN=... ./tk qc push out/<run_id>
 #   ./tk down
 #
 # The CLI runs in the testkit/runner image (built on first use from
@@ -56,8 +57,10 @@ case "${1:-}" in
     ;;
 esac
 
+# The QC token variable is the one named in testkit.yaml (qc.token_env).
+TOKEN_ENV=$(sed -n 's/^ *token_env: *\([A-Z_][A-Z0-9_]*\).*/\1/p' "$ROOT/testkit.yaml")
 env_args=""
-for v in $(env | sed -n 's/^\(TESTKIT_[A-Z_]*\|TK_[A-Z0-9_]*\|[A-Z_]*_IMAGE\)=.*/\1/p'); do
+for v in $(env | sed -n 's/^\(TESTKIT_[A-Z_]*\|TK_[A-Z0-9_]*\|[A-Z_]*_IMAGE\|HTTPS\?_PROXY\|NO_PROXY\|https\?_proxy\|no_proxy\)=.*/\1/p') $TOKEN_ENV; do
   case "$v" in TESTKIT_IN_NETWORK) continue ;; esac
   env_args="$env_args -e $v"
 done
