@@ -67,7 +67,7 @@ Mọi provider đều nhận **bản đã che** và bị từ chối gửi nếu
 | `TESTKIT_BUILD_CA` | Tệp CA (PEM) cho các lần build image sau proxy chặn TLS |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` | Chuyển vào các lần build image và vào container CLI (`./tk`) |
 | `TK_NOFILE_LIMIT` | Giới hạn số file mở cho Elasticsearch/ClickHouse (mặc định 65536; hạ xuống `$(ulimit -Hn)` nếu engine từ chối) |
-| `TK_PORT_*` | Cổng trên máy của từng thành phần (xem `testkit.env`) |
+| `TK_PORT_*` | Cổng trên máy của từng thành phần (xem `testkit.env`; RabbitMQ: `TK_PORT_RABBITMQ`, `TK_PORT_RABBITMQ_MGMT`) |
 | `<TÊN>_IMAGE`, `TESTKIT_VERSION` | Ghi đè phiên bản image (vd. thử Postgres khác) |
 | `TESTKIT_PROJECT`, `TESTKIT_NETWORK`, `TESTKIT_ROOT` | Ghi đè tên project, mạng, thư mục gốc |
 | `DOCKER_SOCK` | Đường dẫn docker socket cho `./tk` (mặc định `/var/run/docker.sock`) |

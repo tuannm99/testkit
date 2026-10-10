@@ -56,7 +56,8 @@ Mỗi lần chạy case có kho riêng (database/index/topic/tiền tố key ri�
 | `elasticsearch` | `indices: { <tên>: { mappings: tệp.json } }` (replica luôn 0) |
 | `clickhouse` | `migrations`, `snapshot` |
 | `mongo` | `collections`, `snapshot` |
-| `redis` | `snapshot: true` (chụp các key dưới tiền tố của lần chạy) |
+| `redis` | `snapshot: true` (chụp các key dưới tiền tố của lần chạy); `queues: [{name, kind: stream\|list, group, processing, dlq}]` — hàng đợi service tiêu thụ. `stream`: consumer group `group` (TestKit tạo từ đầu stream, service chấp nhận `BUSYGROUP`); `list`: mẫu tin cậy `BLMOVE` sang `processing` (mặc định `<name>:processing`), xoá khỏi đó sau khi xử lý. Khoá thật là `{{ rkey "<name>" }}` (có tiền tố namespace) |
+| `rabbitmq` | `queues: [{name, dlq}]` — mỗi lần chạy một **vhost** riêng (= namespace, xoá khi xong); TestKit khai báo queue (và `dlq` qua dead-letter của broker), service **không** khai báo lại với tham số khác (dùng passive declare) và nên `nack` không requeue để vào DLQ |
 
 ## `mocks` — bên thứ 3
 
@@ -77,13 +78,18 @@ Không bao giờ gọi bên thứ 3 thật trong test. Mỗi bên thứ 3 là m�
 | Trigger | Trường |
 |---|---|
 | `kafka` | `topic` (tên logic, được đổi theo namespace), `group`, `key`, `value` (template) |
+| `rabbitmq` | `queue` (đã khai báo trong `stores.rabbitmq`), `value` (template thân tin), `key` (template message id) |
+| `redis` | `queue` (đã khai báo trong `stores.redis.queues`), `value` (template, vào trường `payload` của stream hoặc phần tử list), `key` (template, trường `id`) |
 | `db-poll` | `table`, `sql` (câu INSERT một job, template), `drained` (SQL trả số job chưa xong) |
 
 Template của trigger có `{{ .job.id }}`, các trường khác của job (`{{ .job.order_id }}`...), `{{ .now }}`, `{{ .ns }}`,
 `{{ .run_id }}`, `{{ .vars.* }}`. Lưu ý: hiện tại nếu case không truyền `order_id`, TestKit đặt `order_id = id` (giữ cho
 service mẫu; service khác nên truyền trường mình cần một cách tường minh trong `job:`).
 
-Khai báo cả hai trigger thì mỗi case chạy qua cả hai và kết quả phải giống nhau (so khớp trigger).
+Khai báo nhiều trigger thì mỗi case chạy qua từng trigger và kết quả phải giống nhau (so khớp trigger). Drain của mỗi loại
+đều chính xác, không đoán: RabbitMQ `ready = 0` và `unacked = 0` ổn định ≥ 1,3 giây (số liệu quản trị trễ ~0,5 giây);
+Redis stream không còn entry sau `last-delivered-id` của group và danh sách pending rỗng; Redis list rỗng cả queue lẫn
+`processing`; Kafka lag = 0; db-poll theo câu SQL `drained`.
 
 ## `entities`
 
@@ -119,7 +125,8 @@ Giá trị là template, render cho từng lần chạy để service nối đú
 | `{{ es }}`, `{{ index "x" }}` | Elasticsearch, tên index theo namespace |
 | `{{ ch }}`, `{{ chuser }}`, `{{ chpass }}` | ClickHouse (database: `{{ database }}`) |
 | `{{ mongo }}` | Mongo (database: `{{ database }}`) |
-| `{{ redis }}`, `{{ keyprefix }}` | Redis và tiền tố key của lần chạy |
+| `{{ redis }}`, `{{ keyprefix }}`, `{{ rkey "x" }}` | Redis, tiền tố key của lần chạy, khoá đầy đủ của hàng đợi `x` |
+| `{{ amqp }}`, `{{ amqpuser }}`, `{{ amqppass }}`, `{{ vhost }}` | RabbitMQ: URL `amqp://user:pass@host/<vhost>` của lần chạy, tài khoản test, vhost |
 | `{{ mock "x" }}` | URL gốc của mock HTTP `x` cho lần chạy |
 | `{{ mocksocket "x" }}` | URL WebSocket của mock `x` |
 | `{{ smtpmock }}` | SMTP của Mock Hub (có chèn lỗi); địa chỉ người gửi nên chứa `{{ .NS }}` để mock biết lần chạy |

@@ -74,8 +74,8 @@ Use `./tk <cmd>` (Docker only) or `./bin/testkit <cmd>` (built with `make build`
 2. Write `testkit/scenarios/drafts/<ID>.yaml` with `status: draft` (or run `./tk ai draft`):
    - purpose and preconditions in Vietnamese; each expectation has `id`, check, operator + expected value
      and a `why`; expectations must be able to fail (no tautologies);
-   - per-run data (`{{ .ns }}` in identifiers and addresses); the declared triggers (Kafka and DB poll when
-     the service has both: the same scenario must give the same result through both);
+   - per-run data (`{{ .ns }}` in identifiers and addresses); every trigger the service declares (Kafka,
+     RabbitMQ, Redis, DB poll: the same scenario must give the same result through each);
    - at least one `mutations:` entry: a failpoint of the service that breaks the behaviour, with the
      `expect_red` assertions that must turn red. If no failpoint fits, say so — the service needs one.
 3. `./tk lint`, `./tk plan`, `./tk run --mutations <file>`; read the evidence of every execution.

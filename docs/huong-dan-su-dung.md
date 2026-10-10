@@ -131,7 +131,7 @@ preconditions:
   - Đơn o50 pending; cổng thanh toán (mock theo OpenAPI) trả 500 rồi 201
 input:
   order: { id: o50, customer_email: "cust-o50+{{ .ns }}@shop.test", amount_cents: 5000, currency: USD, status: pending }
-trigger: [kafka, db-poll]          # chạy qua cả hai đường giao job
+trigger: [kafka, db-poll, rabbitmq, redis]   # chạy qua từng đường giao job service hỗ trợ; kết quả phải giống nhau
 given:
   postgres.order: ["{{ .input.order }}"]
   mock.payment: [500, 201]
