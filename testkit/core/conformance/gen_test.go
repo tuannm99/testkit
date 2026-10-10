@@ -193,3 +193,18 @@ func TestDescriptorProblemsAreReported(t *testing.T) {
 		t.Fatalf("want the descriptor to be rejected for failpoint nope, got %v", err)
 	}
 }
+
+func TestVarsAreExpandedPerJob(t *testing.T) {
+	yml := strings.Replace(descriptor, "  done:\n", "  vars:\n    \"customer_{{ .key }}\": \"c-{{ .key }}+{{ .ns }}@x.test\"\n  done:\n", 1)
+	svc := load(t, yml)
+	plan, err := Generate(svc, Options{Patterns: []string{config.PatDuplicate}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(plan.Files[0].Body)
+	for _, want := range []string{"vars:", "customer_k1: c-k1+{{ .ns }}@x.test", "customer_k2: c-k2+{{ .ns }}@x.test"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+}

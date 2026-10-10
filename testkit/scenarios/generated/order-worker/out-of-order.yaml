@@ -15,6 +15,10 @@ preconditions:
   - Giao theo thứ tự ngược, đợi xong hết, rồi giao lại k1
 trigger: [kafka, db-poll, rabbitmq, redis]
 input: {}
+vars:
+  customer_k1: cust-k1+{{ .ns }}@shop.test
+  customer_k2: cust-k2+{{ .ns }}@shop.test
+  customer_k3: cust-k3+{{ .ns }}@shop.test
 given:
   postgres.order:
     - {id: "k1", customer_email: "cust-k1+{{ .ns }}@shop.test", amount_cents: 1500, currency: USD, status: pending}
@@ -42,12 +46,15 @@ expect:
   - {id: A6, check: es.order.k3.status, eq: paid, why: Đơn k3 đã được index}
   - {id: A7, check: postgres.order.count(status=paid), eq: 3, why: 'Cả 3 đơn đều được thanh toán, không đơn nào bị mất'}
   - {id: A8, check: mock.payment.succeeded, eq: 3, why: Trừ tiền đúng một lần cho mỗi đơn (không trừ trùng)}
-  - {id: A9, check: kafka.order-events.count, eq: 3, why: 'Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)'}
-  - {id: A10, check: clickhouse.order_event.count(order_id=k1), eq: 1, why: Đơn k1 có đúng một dòng phân tích}
-  - {id: A11, check: clickhouse.order_event.count(order_id=k2), eq: 1, why: Đơn k2 có đúng một dòng phân tích}
-  - {id: A12, check: clickhouse.order_event.count(order_id=k3), eq: 1, why: Đơn k3 có đúng một dòng phân tích}
-  - {id: A13, check: trigger.backlog, eq: 0, why: Không còn job nào chờ hoặc đang xử lý}
-  - {id: A14, check: trigger.dlq, eq: 0, why: Không job nào vào DLQ}
+  - {id: A9, check: mail.to(customer_k1).count, eq: 1, why: Khách của đơn k1 nhận đúng một mail}
+  - {id: A10, check: mail.to(customer_k2).count, eq: 1, why: Khách của đơn k2 nhận đúng một mail}
+  - {id: A11, check: mail.to(customer_k3).count, eq: 1, why: Khách của đơn k3 nhận đúng một mail}
+  - {id: A12, check: kafka.order-events.count, eq: 3, why: 'Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)'}
+  - {id: A13, check: clickhouse.order_event.count(order_id=k1), eq: 1, why: Đơn k1 có đúng một dòng phân tích}
+  - {id: A14, check: clickhouse.order_event.count(order_id=k2), eq: 1, why: Đơn k2 có đúng một dòng phân tích}
+  - {id: A15, check: clickhouse.order_event.count(order_id=k3), eq: 1, why: Đơn k3 có đúng một dòng phân tích}
+  - {id: A16, check: trigger.backlog, eq: 0, why: Không còn job nào chờ hoặc đang xử lý}
+  - {id: A17, check: trigger.dlq, eq: 0, why: Không job nào vào DLQ}
 evidence: {grafana: [jobs_total, side_effects_total, payment_calls_total]}
 within: 45s
 mutations:

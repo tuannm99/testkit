@@ -15,6 +15,8 @@ preconditions:
   - Message độc được đưa vào hàng đợi trước job hợp lệ
 trigger: [db-poll]
 input: {}
+vars:
+  customer_k1: cust-k1+{{ .ns }}@shop.test
 given:
   postgres.order:
     - {id: "k1", customer_email: "cust-k1+{{ .ns }}@shop.test", amount_cents: 1500, currency: USD, status: pending}
@@ -31,9 +33,10 @@ expect:
   - {id: A3, check: es.order.k1.status, eq: paid, why: Đơn k1 đã được index}
   - {id: A4, check: postgres.order.count(status=paid), eq: 1, why: 'Cả 1 đơn đều được thanh toán, không đơn nào bị mất'}
   - {id: A5, check: mock.payment.succeeded, eq: 1, why: Trừ tiền đúng một lần cho mỗi đơn (không trừ trùng)}
-  - {id: A6, check: kafka.order-events.count, eq: 1, why: 'Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)'}
-  - {id: A7, check: clickhouse.order_event.count(order_id=k1), eq: 1, why: Đơn k1 có đúng một dòng phân tích}
-  - {id: A8, check: trigger.backlog, eq: 0, why: 'Không còn gì chờ hoặc đang xử lý: message độc không bị thử lại mãi'}
+  - {id: A6, check: mail.to(customer_k1).count, eq: 1, why: Khách của đơn k1 nhận đúng một mail}
+  - {id: A7, check: kafka.order-events.count, eq: 1, why: 'Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)'}
+  - {id: A8, check: clickhouse.order_event.count(order_id=k1), eq: 1, why: Đơn k1 có đúng một dòng phân tích}
+  - {id: A9, check: trigger.backlog, eq: 0, why: 'Không còn gì chờ hoặc đang xử lý: message độc không bị thử lại mãi'}
 evidence: {grafana: [jobs_total, side_effects_total, payment_calls_total]}
 within: 45s
 mutations:

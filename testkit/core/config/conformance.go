@@ -28,6 +28,11 @@ type Conformance struct {
 	Given yaml.Node `yaml:"given"`
 	// Shared is given once per case (mock scripts, anything not per job).
 	Shared yaml.Node `yaml:"shared"`
+	// Vars become the case's `vars` for every job (name and value are templates over {{ .key }};
+	// {{ .ns }} stays a runtime value). They name per-job values a check cannot spell, e.g.
+	// vars: { "customer_{{ .key }}": "cust-{{ .key }}+{{ .ns }}@shop.test" } lets a check say
+	// mail.to(customer_{{ .key }}).count.
+	Vars map[string]string `yaml:"vars"`
 	// Job adds fields to the job handed to the trigger (`.job.<field>` in trigger templates).
 	Job map[string]any `yaml:"job"`
 

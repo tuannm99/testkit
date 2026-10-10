@@ -288,6 +288,7 @@ type builder struct {
 	purpose    string
 	pre        []string
 	given      *yaml.Node
+	vars       *yaml.Node
 	steps      []*yaml.Node
 	asserts    []assertion
 	within     string
@@ -342,6 +343,20 @@ func (b *builder) givenFor(n int) error {
 		}
 	}
 	b.given = out
+	if len(b.g.c.Vars) > 0 {
+		names := make([]string, 0, len(b.g.c.Vars))
+		for k := range b.g.c.Vars {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		vars := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		for _, k := range keys(n) {
+			for _, name := range names {
+				vars.Content = append(vars.Content, str(subStr(name, k, n)), str(subStr(b.g.c.Vars[name], k, n)))
+			}
+		}
+		b.vars = vars
+	}
 	return nil
 }
 
@@ -539,6 +554,7 @@ func (b *builder) build() error {
 			doc.Content = append(doc.Content, str(k), v)
 		}
 	}
+	add("vars", b.vars)
 	add("failpoints", func() *yaml.Node {
 		if len(b.failpoints) == 0 {
 			return nil

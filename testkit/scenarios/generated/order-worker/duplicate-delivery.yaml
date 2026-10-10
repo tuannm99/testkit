@@ -15,6 +15,9 @@ preconditions:
   - Mỗi job được giao 3 lần liên tiếp qua trigger
 trigger: [kafka, db-poll, rabbitmq, redis]
 input: {}
+vars:
+  customer_k1: cust-k1+{{ .ns }}@shop.test
+  customer_k2: cust-k2+{{ .ns }}@shop.test
 given:
   postgres.order:
     - {id: "k1", customer_email: "cust-k1+{{ .ns }}@shop.test", amount_cents: 1500, currency: USD, status: pending}
@@ -32,11 +35,13 @@ expect:
   - {id: A4, check: es.order.k2.status, eq: paid, why: Đơn k2 đã được index}
   - {id: A5, check: postgres.order.count(status=paid), eq: 2, why: 'Cả 2 đơn đều được thanh toán, không đơn nào bị mất'}
   - {id: A6, check: mock.payment.succeeded, eq: 2, why: Trừ tiền đúng một lần cho mỗi đơn (không trừ trùng)}
-  - {id: A7, check: kafka.order-events.count, eq: 2, why: 'Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)'}
-  - {id: A8, check: clickhouse.order_event.count(order_id=k1), eq: 1, why: Đơn k1 có đúng một dòng phân tích}
-  - {id: A9, check: clickhouse.order_event.count(order_id=k2), eq: 1, why: Đơn k2 có đúng một dòng phân tích}
-  - {id: A10, check: trigger.backlog, eq: 0, why: Không còn job nào chờ hoặc đang xử lý}
-  - {id: A11, check: trigger.dlq, eq: 0, why: 'Giao trùng không phải lỗi: không job nào vào DLQ'}
+  - {id: A7, check: mail.to(customer_k1).count, eq: 1, why: Khách của đơn k1 nhận đúng một mail}
+  - {id: A8, check: mail.to(customer_k2).count, eq: 1, why: Khách của đơn k2 nhận đúng một mail}
+  - {id: A9, check: kafka.order-events.count, eq: 2, why: 'Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)'}
+  - {id: A10, check: clickhouse.order_event.count(order_id=k1), eq: 1, why: Đơn k1 có đúng một dòng phân tích}
+  - {id: A11, check: clickhouse.order_event.count(order_id=k2), eq: 1, why: Đơn k2 có đúng một dòng phân tích}
+  - {id: A12, check: trigger.backlog, eq: 0, why: Không còn job nào chờ hoặc đang xử lý}
+  - {id: A13, check: trigger.dlq, eq: 0, why: 'Giao trùng không phải lỗi: không job nào vào DLQ'}
 evidence: {grafana: [jobs_total, side_effects_total, payment_calls_total]}
 within: 45s
 mutations:

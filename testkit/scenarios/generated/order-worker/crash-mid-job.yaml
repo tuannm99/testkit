@@ -16,6 +16,8 @@ preconditions:
   - 1 job có dữ liệu nghiệp vụ theo conformance.given
 trigger: [kafka, db-poll, rabbitmq, redis]
 input: {}
+vars:
+  customer_k1: cust-k1+{{ .ns }}@shop.test
 failpoints: [crash_after_db_commit=once]
 sut: {restart: 'on-failure:3'}
 given:
@@ -32,10 +34,11 @@ expect:
   - {id: A4, check: es.order.k1.status, eq: paid, why: Đơn k1 đã được index}
   - {id: A5, check: postgres.order.count(status=paid), eq: 1, why: 'Cả 1 đơn đều được thanh toán, không đơn nào bị mất'}
   - {id: A6, check: mock.payment.succeeded, eq: 1, why: Trừ tiền đúng một lần cho mỗi đơn (không trừ trùng)}
-  - {id: A7, check: kafka.order-events.count, eq: 1, why: 'Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)'}
-  - {id: A8, check: clickhouse.order_event.count(order_id=k1), eq: 1, why: Đơn k1 có đúng một dòng phân tích}
-  - {id: A9, check: trigger.backlog, eq: 0, why: 'Job được giao lại và xử lý xong, không còn tồn đọng'}
-  - {id: A10, check: trigger.dlq, eq: 0, why: Chết giữa chừng không được biến thành dead-letter}
+  - {id: A7, check: mail.to(customer_k1).count, eq: 1, why: Khách của đơn k1 nhận đúng một mail}
+  - {id: A8, check: kafka.order-events.count, eq: 1, why: 'Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)'}
+  - {id: A9, check: clickhouse.order_event.count(order_id=k1), eq: 1, why: Đơn k1 có đúng một dòng phân tích}
+  - {id: A10, check: trigger.backlog, eq: 0, why: 'Job được giao lại và xử lý xong, không còn tồn đọng'}
+  - {id: A11, check: trigger.dlq, eq: 0, why: Chết giữa chừng không được biến thành dead-letter}
 evidence: {grafana: [jobs_total, side_effects_total, payment_calls_total]}
 within: 60s
 mutations:

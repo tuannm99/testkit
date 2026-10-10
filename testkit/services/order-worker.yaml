@@ -241,6 +241,9 @@ conformance:
       - { id: "{{ .key }}", customer_email: "cust-{{ .key }}+{{ .ns }}@shop.test", amount_cents: 1500, currency: USD, status: pending }
   shared:
     mock.payment: [201]
+  # Names for per-job values a check cannot spell (mail.to(customer_k1).count).
+  vars:
+    "customer_{{ .key }}": "cust-{{ .key }}+{{ .ns }}@shop.test"
 
   # What holds once a job is complete.
   done:
@@ -250,6 +253,7 @@ conformance:
   # Side effects that must happen exactly once per job.
   effects:
     - { check: mock.payment.succeeded, per_job: 1, why: "Trừ tiền đúng một lần cho mỗi đơn (không trừ trùng)" }
+    - { check: "mail.to(customer_{{ .key }}).count", eq: 1, why: "Khách của đơn {{ .key }} nhận đúng một mail" }
     - { check: kafka.order-events.count, per_job: 1, why: "Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)" }
     - { check: "clickhouse.order_event.count(order_id={{ .key }})", eq: 1, why: "Đơn {{ .key }} có đúng một dòng phân tích" }
 

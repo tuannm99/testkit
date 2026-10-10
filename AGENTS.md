@@ -42,7 +42,8 @@ operators, suites), `docs/tham-chieu-service.md` (service descriptors) and `docs
 testkit.yaml              project config (paths, images, qc, ai)
 infra/compose/            docker-compose.yml, versions.env (pinned images), testkit.env (ports, test creds)
 testkit/core/             config, kit (interfaces), scenario (DSL, lint), orchestrator, assert, evidence,
-                          result, report, perf (stats/baselines), ai (redaction, prompts, tasks)
+                          result, report, perf (stats/baselines), ai (redaction, prompts, tasks),
+                          conformance (generator of the standard case pack)
 testkit/adapters/         stores, triggers, mocks, chaos, exec (k6, playwright), collectors, qc, ai providers
 testkit/steps/            vocabulary of steps and checks (`testkit steps`)
 testkit/services/         one YAML per service under test
@@ -62,6 +63,7 @@ Use `./tk <cmd>` (Docker only) or `./bin/testkit <cmd>` (built with `make build`
 | Stack up / health | `./tk doctor`, `./tk up --services <svc>`, `./tk status` |
 | What a case may use | `./tk steps` (steps, checks, operators), `testkit/services/<svc>.yaml` (entities, mocks, triggers, failpoints) |
 | Check / preview a case | `./tk lint <file>`, `./tk plan <file>` |
+| Standard case pack of a service | `./tk gen --service <svc> [--list]`, `./tk gen --check` (see `docs/bo-case-chuan.md`) |
 | Run | `./tk run <file|dir>` (`--mutations`, `--retries 1`), suites: `./tk run testkit/suites/release.yaml` |
 | Mutation gate for a new case | `./tk admit <file>` (people add `--approve --by <name>`) |
 | Evidence | `out/<run_id>/report.html`, `case.json`, `assertions/*.json`, `timeline.json`, `logs/`, `output/` |
@@ -94,6 +96,25 @@ Use `./tk <cmd>` (Docker only) or `./bin/testkit <cmd>` (built with `make build`
    what the mocks journaled, the store snapshots, the generator counters (`load.*`).
 3. Fix the cause where it lives — service, scenario, environment or TestKit — with a regression test.
    Re-run and show the new run id. Flaky cases are quarantined only by people (owner, ticket, deadline).
+
+## Workflow: standard case pack (duplicate delivery, poison message, crash, dependency fault, out of order, load)
+
+Do not hand-write these cases: they are generated from the `conformance:` section of the service descriptor
+(`docs/bo-case-chuan.md`). What you write is the description of the service's business, once.
+
+1. Read the descriptor and the 1–2 approved cases of the service. Add or extend `conformance:`: `given` (ONE job's rows,
+   `{{ .key }}`), `done` (what holds when a job is complete), `effects` (every side effect that must happen exactly once —
+   an effect that is not listed is not guarded), `patterns` (+ `mutations` with real failpoints).
+2. Every covered trigger must declare its dead-letter destination (`triggers.kafka.dlq`, `triggers.db-poll.dead` +
+   `drained`, `dlq` of the RabbitMQ/Redis queue). Missing failpoint for a mutation: say so — the service needs one.
+3. `./tk gen --service <svc> --list`, then `./tk gen --service <svc>` (it lints). Never edit generated files by hand
+   (change the descriptor and regenerate); never touch an approved one. `./tk gen --check` must be clean.
+4. `./tk run --mutations testkit/scenarios/generated/<svc>`; read the evidence of every execution. A red case without a
+   mutation is a finding (product, consumer of one technology, environment, or test): investigate, do not weaken
+   `done`/`effects`. A surviving mutation means the description is too loose: strengthen `effects`.
+5. SLO thresholds of `steady-load` are the team's: never invent them. Baselines are recorded by `./tk baseline record`
+   on an idle stack.
+6. Hand over: `./tk admit` results and run ids; a person runs `--approve`.
 
 ## Workflow: performance
 

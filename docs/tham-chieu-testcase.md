@@ -135,6 +135,7 @@ Dạng chung: `<nguồn>.<đối tượng>[.<mã>].<thuộc tính>` hoặc `...c
 |---|---|
 | `postgres` | `postgres.order.o1.status`, `postgres.order.o1.exists`, `postgres.order.count(status=paid)` |
 | `kafka` | `kafka.order-events.count(key=o1)`, `kafka.topic(orders.dlq).count`, `kafka.lag(order-worker)` |
+| `trigger` | `trigger.backlog` (job chưa xong: đang chờ + đang xử lý), `trigger.dlq` (job service đã bỏ cuộc, ở nơi dead-letter đã khai báo). **Trung lập với công nghệ**: cùng một câu check đúng cho Kafka, db-poll, RabbitMQ và Redis, nên một case viết một lần chạy được qua mọi trigger. Khai báo cần có: bảng ở mục `triggers` của [tham-chieu-service.md](tham-chieu-service.md) |
 | `rabbitmq` | `rabbitmq.<queue>.ready`, `.unacked`, `.depth`, `.consumers`, `.published`, `.acked`, `.redelivered`, `rabbitmq.<queue>.dlq.ready`, `.dlq.messages` |
 | `es` | `es.order.o1.status`, `es.order.count(status=paid)` |
 | `clickhouse` | `clickhouse.order_event.count(order_id=o1)`, `clickhouse.order_event.duplicates` |

@@ -98,6 +98,7 @@ Dùng `./tk <lệnh>` (chỉ cần Docker) hoặc `./bin/testkit <lệnh>`. Tu�
 |---|---|
 | `steps` | — In từ vựng: bước, check, toán tử |
 | `lint [tệp\|thư mục...]` | — |
+| `gen` | Sinh bộ case chuẩn từ mục `conformance` của service ([bo-case-chuan.md](bo-case-chuan.md)): `--service <svc>` (mặc định mọi service có `conformance`), `--pattern <mẫu,...>`, `--out <thư mục>` (mặc định `<scenarios_dir>/generated`), `--list` (chỉ in kế hoạch, kể cả mẫu `n/a`), `--check` (không ghi; thoát mã 2 nếu có file thiếu / lỗi thời / mồ côi — dùng trong CI), `--prune` (xoá nháp sinh ra mà mô tả không còn tạo nữa) |
 | `plan [tệp\|thư mục...]` | — Chạy thử khô: in những gì sẽ tạo, gọi, kiểm tra |
 | `run [tệp\|thư mục...]` hoặc `run <suite.yaml>` | `--mutations`, `--retries N`, `--parallel N`, `--trigger <tên>`, `--keep`, `--build`, `--no-observability`, `--run-id`, `--pack` |
 | `admit <tệp...>` | `--stability N` (mặc định 2), `--approve --by <người>`, `--parallel`, `--build`, `--run-id` |
@@ -128,5 +129,5 @@ Dùng `./tk <lệnh>` (chỉ cần Docker) hoặc `./bin/testkit <lệnh>`. Tu�
 
 ## Script nghiệm thu
 
-`scripts/acceptance/phase0.sh` … `phase7.sh` chạy lại kiểm chứng của từng giai đoạn (cần stack đang chạy, trừ phase 7 chạy
+`scripts/acceptance/phase0.sh` … `phase9.sh` chạy lại kiểm chứng của từng giai đoạn (cần stack đang chạy, trừ phase 7 chạy
 được không cần model). Hữu ích sau khi nâng cấp phiên bản image hoặc sửa lõi TestKit.
