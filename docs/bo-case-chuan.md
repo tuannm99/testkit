@@ -364,4 +364,49 @@ Rồi `./tk gen --service invoice-mailer` cho 3 case × mọi trigger của serv
 
 ## 12. Đã kiểm chứng trên `order-worker`
 
-<<KIEM-CHUNG>>
+Chạy bằng `scripts/acceptance/phase9.sh` (`LOAD=1`) trên stack đầy đủ (profile `chaos`), máy 4 CPU / 16 GiB, ngày
+2026-10-10; bằng chứng ở `out/r-p9-func`, `out/r-p9-fault`, `out/r-p9-load` (báo cáo `report.html` trong mỗi thư mục).
+
+| Mẫu | Case × trigger | Không đột biến | Đột biến | Parity |
+|---|---|---|---|---|
+| `duplicate-delivery` | 4 | xanh | `skip_paid_check` bị bắt ở cả 4 | khớp |
+| `poison-message` | 4 (mỗi trigger một case) | xanh | `drop_dead_letters` bị bắt ở cả 4 | — |
+| `crash-mid-job` | 4 | xanh | `skip_paid_check` bị bắt ở cả 4 | khớp |
+| `out-of-order` | 4 | xanh | `skip_paid_check` bị bắt ở cả 4 | khớp |
+| `dependency-fault` · `payment reset_peer` (150 job, 5 s) | 4 | xanh | `no_retry` bị bắt ở cả 4 | khớp |
+| `dependency-fault` · `postgres down` (150 job, 12 s) | 4 | xanh | `outage_is_failure` bị bắt ở Kafka, RabbitMQ, Redis; **db-poll không có đột biến áp dụng** (xanh, không có phản chứng) | khớp |
+| `steady-load` | 4 (mỗi trigger một case) | xanh, không regression so với baseline | — | — |
+
+Tổng: 16 execution chức năng (16 lượt đột biến) và 8 execution lỗi phụ thuộc (7 lượt đột biến); cả 23 lượt đột biến đều bị bắt, không lượt nào sống sót.
+
+**Những gì bộ case đã tìm ra trong chính TestKit** (đã sửa; mô tả chi tiết ở `docs/assumptions.md`):
+
+1. *Drain RabbitMQ sai.* Đột biến `skip_paid_check` của `out-of-order` "sống sót" trên RabbitMQ: `trigger.backlog` đọc 0 trong lúc
+   consumer còn đang thử lại job, vì management API thấy message đang bị giữ chưa ack **chậm 4–5 giây**. Nay đọc thẳng từ broker
+   (`rabbitmqctl list_queues`); có test hồi quy đỏ với code cũ.
+2. *Kỳ vọng `expect_red` đoán sai triệu chứng.* Triệu chứng thật của `skip_paid_check` là job kẹt mãi (không bao giờ xong), không phải
+   trừ tiền lần hai. Đã sửa theo bằng chứng.
+3. *Dừng khẩn cấp theo DLQ che mất verdict.* Dừng thí nghiệm khi có job vào DLQ biến lỗi sản phẩm thành kết quả "môi trường"
+   (đột biến "không được đánh giá"). Nay chỉ dừng vì blast radius (`abort_backlog`).
+4. *Sự cố ngắn hơn ngân sách thử lại không chứng minh gì.* Sự cố DB 5 s với ngân sách ≈ 5 s: đột biến bị bắt lúc có lúc không. Dùng 12 s.
+5. *Parity so số đo thời gian thô.* Thời gian phục hồi 1,6 s (Kafka) so với 5,1 s (db-poll) bị báo lệch dù cùng xanh. Nay so verdict cho `experiment.*`.
+6. *Đột biến không áp dụng cho mọi trigger.* `outage_is_failure` không có đường mã trong db-poll (poller dùng chính DB đang chết), nên mới có
+   `mutations[].triggers` và dòng "green only" trong báo cáo.
+
+**Số đo của case tải** (baseline 5 lần × 3 lặp, 20 job/s; trung vị; `testkit/baselines/<dấu vân tay máy>/std-order-worker-20rps-<trigger>.json`):
+
+| Trigger | p95 | p99 | Thông lượng |
+|---|---|---|---|
+| Kafka | 6,6 ms | 17,9 ms | 20,0/s |
+| RabbitMQ | 5,7 ms | 8,6 ms | 20,0/s |
+| Redis | 4,1 ms | 6,6 ms | 20,0/s |
+| Bảng DB (db-poll) | 374,9 ms | 406,4 ms | 19,7/s |
+
+Cần đọc đúng:
+
+- Ngưỡng SLO trong `order-worker.yaml` (`p95_ms: 1500`...) là con số **tạm** lấy từ `TC-PERF-001`, rộng hơn hẳn số đo; đội service cần đặt ngưỡng thật.
+- Lần so sánh "không regression" dùng baseline vừa ghi vài phút trước trên cùng máy: nó chứng minh cơ chế chạy được, **không** chứng minh case phát hiện được một regression
+  thật (khả năng đó được kiểm riêng bởi `TC-PERF-901`).
+- Baseline là của máy sandbox này; ghi lại trên môi trường thật trước khi dùng làm chuẩn.
+
+**Chưa làm**: chưa case sinh ra nào được `admit`/duyệt (việc của người); chưa đưa bộ vào suite release; chưa có case cho scheduler không có trigger giao job hay SQS.

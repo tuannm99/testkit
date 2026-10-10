@@ -1,0 +1,54 @@
+{
+  "key": "std-order-worker-20rps-rabbitmq",
+  "case_id": "TC-STD-ORDER-WORKER-LOAD-RABBITMQ",
+  "environment": {
+    "cpus": 4,
+    "memory_gib": 16,
+    "os": "linux/amd64",
+    "docker_version": "29.6.2",
+    "images": {
+      "CLICKHOUSE_IMAGE": "clickhouse/clickhouse-server:24.8.4.13-alpine",
+      "ELASTICSEARCH_IMAGE": "elasticsearch:8.15.3",
+      "KAFKA_IMAGE": "apache/kafka:3.8.0",
+      "MONGO_IMAGE": "mongo:7.0.14",
+      "POSTGRES_IMAGE": "postgres:16.4-alpine",
+      "REDIS_IMAGE": "redis:7.4.1-alpine"
+    }
+  },
+  "recorded_at": "2026-10-10T16:51:12.568723398Z",
+  "commit": "df6f0cadbcb8c6bb981a2e2c0aca4d7a955dfb84",
+  "run_id": "r20261010-164857-3bb0",
+  "samples": {
+    "p95_ms": [
+      5.90473413467407,
+      5.519878864288329,
+      5.721867084503166,
+      6.0197710990905735,
+      5.130386352539027
+    ],
+    "p99_ms": [
+      16.72647953033439,
+      8.599467277526836,
+      8.635048866271973,
+      7.173721790313716,
+      10.465958118438698
+    ],
+    "throughput": [
+      20.0474828980814,
+      20.04784894022606,
+      20.047311619862267,
+      20.045425357565545,
+      20.045819586983292
+    ]
+  },
+  "median": {
+    "p95_ms": 5.721867084503166,
+    "p99_ms": 8.635048866271973,
+    "throughput": 20.047311619862267
+  },
+  "mad": {
+    "p95_ms": 0.20198822021483664,
+    "p99_ms": 1.4613270759582564,
+    "throughput": 0.0005373203637937252
+  }
+}
