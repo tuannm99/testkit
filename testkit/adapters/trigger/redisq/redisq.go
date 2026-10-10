@@ -91,6 +91,15 @@ func (t *Trigger) Drain(ctx context.Context) error {
 	}
 }
 
+// Backlog is everything waiting or pending in the queue.
+func (t *Trigger) Backlog(ctx context.Context) (int64, error) { return t.q.Depth(ctx) }
+
+// DeadLetters is the number of entries in the queue's declared dead-letter queue.
+func (t *Trigger) DeadLetters(ctx context.Context) (int64, error) {
+	n, _, err := t.q.DeadLetters(ctx)
+	return n, err
+}
+
 func (t *Trigger) Collect(context.Context, kit.TimeWindow) ([]kit.Artifact, error) { return nil, nil }
 
 func (t *Trigger) Teardown(context.Context) error {
@@ -100,4 +109,7 @@ func (t *Trigger) Teardown(context.Context) error {
 	return nil
 }
 
-var _ kit.TriggerConnector = (*Trigger)(nil)
+var (
+	_ kit.TriggerConnector = (*Trigger)(nil)
+	_ kit.TriggerState     = (*Trigger)(nil)
+)

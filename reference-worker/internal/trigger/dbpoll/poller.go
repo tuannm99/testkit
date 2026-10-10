@@ -144,12 +144,21 @@ func (p *Poller) claim(ctx context.Context, n int) ([]claimed, error) {
 	return out, rows.Err()
 }
 
+// deadStatus is where a job the worker gave up on goes: the dead state, unless the
+// drop_dead_letters failpoint makes it vanish as if it had succeeded.
+func deadStatus() string {
+	if failpoint.Enabled(failpoint.DropDeadLetters) {
+		return "done"
+	}
+	return "dead"
+}
+
 func (p *Poller) run(ctx context.Context, j claimed) {
 	// Processing is not interrupted by shutdown: finish, then release.
 	pctx := context.WithoutCancel(ctx)
 	log := p.Log.With("job_id", j.id, "job_key", j.key, "order_id", j.orderID, "attempt", j.attempts)
 	if j.attempts > j.maxAttempts {
-		p.finish(pctx, j, "dead", errors.New("max attempts exceeded"), 0)
+		p.finish(pctx, j, deadStatus(), errors.New("max attempts exceeded"), 0)
 		return
 	}
 	hbCtx, stopHB := context.WithCancel(pctx)
@@ -164,11 +173,11 @@ func (p *Poller) run(ctx context.Context, j claimed) {
 	case domain.IsPermanent(err):
 		log.Error("job failed permanently", "err", err.Error())
 		p.Metrics.DLQ.Inc()
-		p.finish(pctx, j, "dead", err, 0)
+		p.finish(pctx, j, deadStatus(), err, 0)
 	case j.attempts >= j.maxAttempts && !errors.Is(err, domain.ErrBusy):
 		log.Error("job exhausted attempts", "err", err.Error())
 		p.Metrics.DLQ.Inc()
-		p.finish(pctx, j, "dead", err, 0)
+		p.finish(pctx, j, deadStatus(), err, 0)
 	default:
 		backoff := time.Duration(j.attempts) * 500 * time.Millisecond
 		if errors.Is(err, domain.ErrBusy) {

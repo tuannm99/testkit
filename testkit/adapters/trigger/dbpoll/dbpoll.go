@@ -20,6 +20,7 @@ type Trigger struct {
 	pool    *pgxpool.Pool
 	sql     string
 	drained string
+	dead    string
 }
 
 func New() kit.Connector { return &Trigger{} }
@@ -32,7 +33,7 @@ func (t *Trigger) Provision(ctx context.Context, env *kit.Env) error {
 	if !ok {
 		return fmt.Errorf("service %s declares no db-poll trigger", env.Service.Name)
 	}
-	t.sql, t.drained = ts.SQL, ts.Drained
+	t.sql, t.drained, t.dead = ts.SQL, ts.Drained, ts.Dead
 	var err error
 	t.pool, err = postgres.Open(ctx, env.Runner.Postgres, env.NS.Database())
 	return err
@@ -83,6 +84,26 @@ func (t *Trigger) Drain(ctx context.Context) error {
 	}
 }
 
+// Backlog is the number of jobs the descriptor's `drained` query counts.
+func (t *Trigger) Backlog(ctx context.Context) (int64, error) {
+	if t.drained == "" {
+		return 0, fmt.Errorf("triggers.db-poll declares no drained query")
+	}
+	var n int64
+	err := t.pool.QueryRow(ctx, t.drained).Scan(&n)
+	return n, err
+}
+
+// DeadLetters is the number of jobs the descriptor's `dead` query counts.
+func (t *Trigger) DeadLetters(ctx context.Context) (int64, error) {
+	if t.dead == "" {
+		return 0, fmt.Errorf("triggers.db-poll declares no dead query (SQL returning the number of jobs given up on)")
+	}
+	var n int64
+	err := t.pool.QueryRow(ctx, t.dead).Scan(&n)
+	return n, err
+}
+
 func (t *Trigger) Collect(context.Context, kit.TimeWindow) ([]kit.Artifact, error) { return nil, nil }
 
 func (t *Trigger) Teardown(context.Context) error {
@@ -92,4 +113,7 @@ func (t *Trigger) Teardown(context.Context) error {
 	return nil
 }
 
-var _ kit.TriggerConnector = (*Trigger)(nil)
+var (
+	_ kit.TriggerConnector = (*Trigger)(nil)
+	_ kit.TriggerState     = (*Trigger)(nil)
+)

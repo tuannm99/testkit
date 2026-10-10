@@ -118,6 +118,8 @@ var Checks = []kit.CheckDef{
 		Examples: []string{"reconcile.paid_orders.mismatches", "reconcile.paid_orders.count(store=elasticsearch)"}},
 	{Prefix: "experiment", Connector: "", Doc: "Chaos experiment and load generator state",
 		Examples: []string{"experiment.recovery_seconds", "experiment.aborted", "experiment.load.sent", "experiment.load.late"}},
+	{Prefix: "trigger", Connector: "", Doc: "State of the execution's trigger, whatever its technology (Kafka, RabbitMQ, Redis, DB table)",
+		Examples: []string{"trigger.backlog", "trigger.dlq"}},
 	{Prefix: "ui", Connector: "ui", Doc: "Playwright UI tests run by ui.run (JSON report)",
 		Examples: []string{"ui.failed", "ui.passed", "ui.tests", "ui.errors", "ui.test(trang đơn hàng hiển thị đúng trạng thái).status"}},
 	{Prefix: "sut", Connector: "sut", Doc: "Service under test containers",

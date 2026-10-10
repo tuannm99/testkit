@@ -1,0 +1,54 @@
+# Sinh tự động bởi `testkit gen` từ testkit/services/order-worker.yaml (mục conformance, mẫu dependency-fault).
+# Đừng sửa tay: sửa mô tả service rồi chạy lại `testkit gen`. Case ở trạng thái draft;
+# `testkit admit` kiểm bằng đột biến, người duyệt mới chạy `testkit admit --approve --by <tên>`.
+id: TC-STD-ORDER-WORKER-FAULT-POSTGRES-DOWN
+title: Sự cố down của postgres trong 5s dưới tải 10 job/s — không mất job, không vào DLQ, phục hồi ≤ 30s
+requirement: REQ-STD
+risk: P0
+status: draft
+owner: qc-lead
+service: order-worker
+purpose: >-
+  Thí nghiệm chaos theo quy trình: tải nền cố định 10 job/s (open model, 100 job) → trạng thái ổn định → gây lỗi "down" lên phụ thuộc "postgres" (chỉ namespace này, qua Toxiproxy) trong 5s, tự dừng nếu job đầu tiên bị đẩy vào DLQ → gỡ lỗi → đo thời gian về trạng thái ổn định. Một sự cố hạ tầng ngắn không được biến thành mất job, xử lý trùng hay dead-letter.
+preconditions:
+  - 100 job; dữ liệu nghiệp vụ tạo bằng perf.fixture của service
+  - Service kết nối tới postgres qua proxy Toxiproxy riêng của execution (chaos.proxies)
+  - Trạng thái ổn định = trigger.backlog ≤ 5
+trigger: [kafka, db-poll, rabbitmq, redis]
+input: {}
+chaos: {proxies: [postgres], max_recovery: 30s}
+given:
+  mock.payment: [201]
+steps:
+  - step: postgres.exec
+    name: tạo dữ liệu của các job
+    with: {sql: 'INSERT INTO orders (id, customer_email, amount_cents, currency) SELECT ''S'' || g, ''p'' || g || ''+{{ .ns }}@shop.test'', 100 + g, ''USD'' FROM generate_series(1, 100) g'}
+  - step: load.start
+    with: {rate: 10, from: 1, to: 100, id_prefix: S}
+  - step: wait.until
+    name: trạng thái ổn định trước khi gây lỗi
+    with: {check: postgres.order.count(status=paid), gte: 20, within: 60s}
+  - step: chaos.down
+    with: {proxy: postgres}
+  - step: chaos.hold
+    with: {for: 5s, abort_if: [{check: trigger.dlq, gt: 0, why: dừng ngay khi job đầu tiên bị đẩy vào DLQ}]}
+  - step: chaos.clear
+  - step: chaos.recover
+    with: {within: 60s, expect: [{check: trigger.backlog, lte: 5, why: tồn đọng về lại mức ổn định}]}
+  - step: load.wait
+    with: {timeout: 120s}
+expect:
+  - {id: A1, check: postgres.order.count(status=paid), eq: 100, why: 'Cả 100 đơn đều được thanh toán, không đơn nào bị mất'}
+  - {id: A2, check: mock.payment.succeeded, eq: 100, why: Trừ tiền đúng một lần cho mỗi đơn (không trừ trùng)}
+  - {id: A3, check: kafka.order-events.count, eq: 100, why: 'Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)'}
+  - {id: A4, check: trigger.dlq, eq: 0, why: Sự cố hạ tầng tạm thời không đẩy job vào DLQ}
+  - {id: A5, check: trigger.backlog, eq: 0, why: Không còn job nào chờ hoặc đang xử lý}
+  - {id: A6, check: experiment.recovery_seconds, lte: 30, why: Phục hồi trong thời gian cho phép}
+  - {id: A7, check: experiment.aborted, eq: false, why: Lỗi nằm trong giới hạn cho phép (không chạm điều kiện dừng khẩn cấp)}
+  - {id: A8, check: experiment.load.late, eq: 0, why: Máy tạo tải không bị nghẽn (mọi job được phát đúng nhịp)}
+  - {id: A9, check: reconcile.paid_orders.mismatches, eq: 0, why: Các kho dữ liệu khớp nhau sau thí nghiệm (reconcile.paid_orders)}
+evidence: {grafana: [jobs_total, side_effects_total, payment_calls_total]}
+within: 165s
+mutations:
+  - {id: M1, failpoint: outage_is_failure, title: Sự cố DB bị tính là lần xử lý thất bại (job có thể vào DLQ), expect_red: [A4]}
+generated: {by: testkit gen, sources: [testkit/services/order-worker.yaml#conformance.patterns.dependency-fault]}

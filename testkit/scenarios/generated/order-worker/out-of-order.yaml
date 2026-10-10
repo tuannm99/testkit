@@ -1,0 +1,55 @@
+# Sinh tự động bởi `testkit gen` từ testkit/services/order-worker.yaml (mục conformance, mẫu out-of-order).
+# Đừng sửa tay: sửa mô tả service rồi chạy lại `testkit gen`. Case ở trạng thái draft;
+# `testkit admit` kiểm bằng đột biến, người duyệt mới chạy `testkit admit --approve --by <tên>`.
+id: TC-STD-ORDER-WORKER-ORDER
+title: Job tới ngược thứ tự và bị phát lại muộn — kết quả không đổi, hiệu ứng đúng một lần
+requirement: REQ-STD
+risk: P1
+status: draft
+owner: qc-lead
+service: order-worker
+purpose: >-
+  3 job được giao theo thứ tự ngược với lúc tạo (k3 → k2 → k1), rồi job đầu tiên bị phát lại muộn sau khi mọi job đã hoàn tất. Kết quả không được phụ thuộc thứ tự tới, và job tới muộn cho việc đã xong không được lặp lại hiệu ứng nào.
+preconditions:
+  - 3 job (k1, k2, k3) có dữ liệu nghiệp vụ theo conformance.given
+  - Giao theo thứ tự ngược, đợi xong hết, rồi giao lại k1
+trigger: [kafka, db-poll, rabbitmq, redis]
+input: {}
+given:
+  postgres.order:
+    - {id: "k1", customer_email: "cust-k1+{{ .ns }}@shop.test", amount_cents: 1500, currency: USD, status: pending}
+    - {id: "k2", customer_email: "cust-k2+{{ .ns }}@shop.test", amount_cents: 1500, currency: USD, status: pending}
+    - {id: "k3", customer_email: "cust-k3+{{ .ns }}@shop.test", amount_cents: 1500, currency: USD, status: pending}
+  mock.payment: [201]
+steps:
+  - step: trigger.enqueue
+    with: {id: k3}
+  - step: trigger.enqueue
+    with: {id: k2}
+  - step: trigger.enqueue
+    with: {id: k1}
+  - step: trigger.drain
+    name: đợi mọi job hoàn tất
+  - step: trigger.enqueue
+    name: phát lại muộn job k1 (đã xong)
+    with: {id: k1}
+expect:
+  - {id: A1, check: postgres.order.k1.status, eq: paid, why: Đơn k1 được thanh toán}
+  - {id: A2, check: postgres.order.k2.status, eq: paid, why: Đơn k2 được thanh toán}
+  - {id: A3, check: postgres.order.k3.status, eq: paid, why: Đơn k3 được thanh toán}
+  - {id: A4, check: es.order.k1.status, eq: paid, why: Đơn k1 đã được index}
+  - {id: A5, check: es.order.k2.status, eq: paid, why: Đơn k2 đã được index}
+  - {id: A6, check: es.order.k3.status, eq: paid, why: Đơn k3 đã được index}
+  - {id: A7, check: postgres.order.count(status=paid), eq: 3, why: 'Cả 3 đơn đều được thanh toán, không đơn nào bị mất'}
+  - {id: A8, check: mock.payment.succeeded, eq: 3, why: Trừ tiền đúng một lần cho mỗi đơn (không trừ trùng)}
+  - {id: A9, check: kafka.order-events.count, eq: 3, why: 'Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)'}
+  - {id: A10, check: clickhouse.order_event.count(order_id=k1), eq: 1, why: Đơn k1 có đúng một dòng phân tích}
+  - {id: A11, check: clickhouse.order_event.count(order_id=k2), eq: 1, why: Đơn k2 có đúng một dòng phân tích}
+  - {id: A12, check: clickhouse.order_event.count(order_id=k3), eq: 1, why: Đơn k3 có đúng một dòng phân tích}
+  - {id: A13, check: trigger.backlog, eq: 0, why: Không còn job nào chờ hoặc đang xử lý}
+  - {id: A14, check: trigger.dlq, eq: 0, why: Không job nào vào DLQ}
+evidence: {grafana: [jobs_total, side_effects_total, payment_calls_total]}
+within: 45s
+mutations:
+  - {id: M1, failpoint: skip_paid_check, title: Bỏ kiểm tra đơn đã paid (job phát lại muộn bị trừ tiền lại), expect_red: [A8]}
+generated: {by: testkit gen, sources: [testkit/services/order-worker.yaml#conformance.patterns.out-of-order]}

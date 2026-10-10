@@ -51,6 +51,8 @@ type Service struct {
 	Reconcile   map[string]ReconcileSpec `yaml:"reconcile"`
 	Chaos       ChaosSpec                `yaml:"chaos"`
 	Perf        PerfServiceSpec          `yaml:"perf"`
+	// Conformance feeds the standard case pack (`testkit gen`).
+	Conformance *Conformance `yaml:"conformance"`
 
 	File string `yaml:"-"` // absolute path of the descriptor
 	Dir  string `yaml:"-"`
@@ -202,6 +204,11 @@ type TriggerSpec struct {
 	Value string `yaml:"value"` // kafka: template of the record value
 	SQL   string `yaml:"sql"`   // db-poll: insert statement (template)
 	Group string `yaml:"group"` // kafka: consumer group used for lag checks (redis stream: consumer group)
+	// DLQ (kafka): logical name of the dead-letter topic, declared in stores.kafka.topics
+	// (rabbitmq and redis take theirs from the queue declaration).
+	DLQ string `yaml:"dlq"`
+	// Dead (db-poll): SQL returning the number of jobs the service gave up on.
+	Dead string `yaml:"dead"`
 	// Queue names the declared queue of a rabbitmq or redis trigger; Value is
 	// the message body template, Key the message id / stream field template.
 	Queue string `yaml:"queue"`
@@ -345,6 +352,8 @@ func (s *Service) Validate() error {
 			}
 			if s.Stores.Kafka == nil {
 				add("triggers.kafka requires stores.kafka")
+			} else if t.DLQ != "" && !hasKafkaTopic(s.Stores.Kafka, t.DLQ) {
+				add("triggers.kafka.dlq %q is not declared in stores.kafka.topics", t.DLQ)
 			}
 		case "db-poll":
 			if t.SQL == "" {
@@ -377,6 +386,7 @@ func (s *Service) Validate() error {
 			add("unknown trigger %q (kafka | db-poll | rabbitmq | redis)", name)
 		}
 	}
+	s.validateConformance(add)
 	for name, r := range s.Reconcile {
 		if len(r.Sources) < 2 {
 			add("reconcile.%s needs at least two sources", name)
@@ -439,6 +449,15 @@ func (s *Service) MockComponents() []string {
 		}
 	}
 	return SortedKeys(set)
+}
+
+func hasKafkaTopic(k *KafkaStore, name string) bool {
+	for _, t := range k.Topics {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func hasRabbitQueue(r *RabbitStore, name string) bool {

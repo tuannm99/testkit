@@ -14,6 +14,7 @@ type Trigger struct {
 	env   *kit.Env
 	c     *Client
 	queue string
+	dlq   string
 	body  string
 	id    string
 }
@@ -28,6 +29,11 @@ func (t *Trigger) Provision(_ context.Context, env *kit.Env) error {
 		return fmt.Errorf("service %s declares no rabbitmq trigger", env.Service.Name)
 	}
 	t.env, t.queue, t.body, t.id = env, spec.Queue, spec.Value, spec.Key
+	for _, q := range env.Service.Stores.RabbitMQ.Queues {
+		if q.Name == spec.Queue {
+			t.dlq = q.DLQ
+		}
+	}
 	t.c = newClient(env.Runner, string(env.NS))
 	return t.c.dial() // the vhost and queues are created by the rabbitmq connector (provisioned first)
 }
@@ -65,6 +71,25 @@ func (t *Trigger) Enqueue(ctx context.Context, j kit.Job) error {
 // Drain waits until the queue is empty and nothing is in flight.
 func (t *Trigger) Drain(ctx context.Context) error { return t.c.drain(ctx, t.queue) }
 
+// Backlog is ready + unacked messages of the queue.
+func (t *Trigger) Backlog(ctx context.Context) (int64, error) {
+	ready, _, err := t.c.ready(t.queue)
+	if err != nil {
+		return 0, err
+	}
+	st, err := t.c.stats(ctx, t.queue)
+	return ready + st.Unacked, err
+}
+
+// DeadLetters is the number of messages in the queue's declared DLQ.
+func (t *Trigger) DeadLetters(context.Context) (int64, error) {
+	if t.dlq == "" {
+		return 0, fmt.Errorf("queue %s declares no dlq", t.queue)
+	}
+	n, _, err := t.c.ready(t.dlq)
+	return n, err
+}
+
 func (t *Trigger) Collect(context.Context, kit.TimeWindow) ([]kit.Artifact, error) { return nil, nil }
 
 func (t *Trigger) Teardown(context.Context) error {
@@ -73,3 +98,5 @@ func (t *Trigger) Teardown(context.Context) error {
 }
 
 var _ kit.TriggerConnector = (*Trigger)(nil)
+
+var _ kit.TriggerState = (*Trigger)(nil)

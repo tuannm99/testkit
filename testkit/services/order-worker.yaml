@@ -80,6 +80,7 @@ triggers:
   kafka:
     topic: orders
     group: order-worker
+    dlq: orders.dlq                  # dead-letter topic (logical name)
     key: "{{ .job.order_id }}"
     value: '{"job_id":"{{ .job.id }}","order_id":"{{ .job.order_id }}","enqueued_at":"{{ .now }}"}'
   rabbitmq:
@@ -94,6 +95,7 @@ triggers:
     table: jobs
     sql: "INSERT INTO jobs (job_key, order_id) VALUES ('{{ .job.id }}', '{{ .job.order_id }}')"
     drained: "SELECT count(*) FROM jobs WHERE status IN ('queued', 'running')"
+    dead: "SELECT count(*) FROM jobs WHERE status = 'dead'"
 
 entities:
   order:
@@ -223,3 +225,73 @@ panels:
   container_memory: { dashboard: tk-run, panel_id: 2 }
   consumer_lag:     { dashboard: tk-run, panel_id: 3 }
   log_levels:       { dashboard: tk-run, panel_id: 5 }
+
+# The standard case pack (testkit gen --service order-worker): the service's own business
+# is described once here; duplicate delivery, poison message, crash, dependency fault, out of
+# order and steady load are generated for every trigger above. See docs/bo-case-chuan.md.
+conformance:
+  owner: qc-lead
+  requirement: REQ-STD
+  within: 45s
+  evidence: [jobs_total, side_effects_total, payment_calls_total]
+
+  # ONE job's business data. {{ .key }} = k1, k2... (unique per job); {{ .ns }} stays a runtime value.
+  given:
+    postgres.order:
+      - { id: "{{ .key }}", customer_email: "cust-{{ .key }}+{{ .ns }}@shop.test", amount_cents: 1500, currency: USD, status: pending }
+  shared:
+    mock.payment: [201]
+
+  # What holds once a job is complete.
+  done:
+    - { check: "postgres.order.{{ .key }}.status", eq: paid, why: "Đơn {{ .key }} được thanh toán" }
+    - { check: "es.order.{{ .key }}.status", eq: paid, why: "Đơn {{ .key }} đã được index" }
+    - { check: "postgres.order.count(status=paid)", per_job: 1, why: "Cả {{ .jobs }} đơn đều được thanh toán, không đơn nào bị mất" }
+  # Side effects that must happen exactly once per job.
+  effects:
+    - { check: mock.payment.succeeded, per_job: 1, why: "Trừ tiền đúng một lần cho mỗi đơn (không trừ trùng)" }
+    - { check: kafka.order-events.count, per_job: 1, why: "Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)" }
+    - { check: "clickhouse.order_event.count(order_id={{ .key }})", eq: 1, why: "Đơn {{ .key }} có đúng một dòng phân tích" }
+
+  patterns:
+    duplicate-delivery:
+      copies: 3
+      mutations:
+        - { failpoint: skip_paid_check, title: "Bỏ kiểm tra đơn đã paid (giao trùng bị trừ tiền lại)", expect_red: [mock.payment.succeeded] }
+    poison-message:
+      body: "{not json"
+      db-poll:
+        sql: "INSERT INTO jobs (job_key, order_id) VALUES ('poison-{{ .ns }}', '')"
+      mutations:
+        - { failpoint: drop_dead_letters, title: "Message không xử lý được bị bỏ thay vì chuyển DLQ", expect_red: [poison] }
+    crash-mid-job:
+      failpoint: crash_after_db_commit
+      log: "failpoint: crashing after db commit"
+      restart: "on-failure:3"
+      mutations:
+        - { failpoint: skip_paid_check, title: "Bỏ kiểm tra đơn đã paid (giao lại sau crash bị trừ tiền lần hai)", expect_red: [mock.payment.succeeded] }
+    dependency-fault:
+      jobs: 100
+      rate: 10
+      max_recovery: 30s
+      faults:
+        - proxy: postgres
+          fault: down
+          for: 5s
+          mutations:
+            - { failpoint: outage_is_failure, title: "Sự cố DB bị tính là lần xử lý thất bại (job có thể vào DLQ)", expect_red: [dlq] }
+        - proxy: payment
+          fault: reset_peer
+          for: 5s
+          mutations:
+            - { failpoint: no_retry, title: "Tắt retry (lỗi tạm thời của cổng thanh toán bị coi là vĩnh viễn)", expect_red: [dlq] }
+    out-of-order:
+      jobs: 3
+      mutations:
+        - { failpoint: skip_paid_check, title: "Bỏ kiểm tra đơn đã paid (job phát lại muộn bị trừ tiền lại)", expect_red: [mock.payment.succeeded] }
+    steady-load:
+      rate: 20
+      duration: 20s
+      warmup: 5s
+      repeat: 3
+      thresholds: { p95_ms: 1500, error_rate: 0.01, min_throughput: 15, max_dropped: 0 }

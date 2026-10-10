@@ -224,6 +224,13 @@ func TestTriggerContract(t *testing.T) {
 					t.Fatalf("enqueue %s: %v", j.ID, err)
 				}
 			}
+			ts, ok := tr.(kit.TriggerState)
+			if !ok {
+				t.Fatal("trigger does not implement kit.TriggerState (trigger.backlog / trigger.dlq)")
+			}
+			if n, err := ts.Backlog(ctx); err != nil || n != 4 {
+				t.Fatalf("Backlog after 4 deliveries = %d (%v), want 4", n, err)
+			}
 			short, c2 := context.WithTimeout(ctx, 700*time.Millisecond)
 			if err := tr.Drain(short); err == nil {
 				t.Fatal("Drain returned while 4 deliveries were pending")
@@ -239,6 +246,9 @@ func TestTriggerContract(t *testing.T) {
 			defer c4()
 			if err := tr.Drain(dctx); err != nil {
 				t.Fatalf("Drain after acknowledging everything: %v", err)
+			}
+			if n, err := ts.Backlog(ctx); err != nil || n != 0 {
+				t.Fatalf("Backlog after drain = %d (%v), want 0", n, err)
 			}
 		})
 	}

@@ -117,6 +117,19 @@ type Trigger interface {
 	Drain(ctx context.Context) error
 }
 
+// TriggerState is implemented by triggers that can report the state of their
+// queue, so one scenario can assert it whatever the technology
+// (checks trigger.backlog and trigger.dlq).
+type TriggerState interface {
+	// Backlog is the number of jobs not finished yet: waiting plus being processed
+	// (Kafka: consumer lag; RabbitMQ: ready + unacked; Redis: waiting + pending;
+	// db-poll: the descriptor's `drained` query).
+	Backlog(ctx context.Context) (int64, error)
+	// DeadLetters is the number of jobs the service gave up on and moved to the
+	// dead-letter destination the descriptor declares.
+	DeadLetters(ctx context.Context) (int64, error)
+}
+
 // TriggerConnector is a Connector that is also a Trigger.
 type TriggerConnector interface {
 	Connector

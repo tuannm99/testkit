@@ -440,6 +440,7 @@ func (r *Runner) execute(ctx context.Context, dir *evidence.Dir, opt Options, c 
 	e.obsVars = map[string]string{"run_id": opt.RunID, "ns": string(ns)}
 	e.env.Proxies = c.Chaos.Proxies
 	e.checkers["experiment"] = experimentChecker{e: e}
+	e.checkers["trigger"] = triggerChecker{e: e}
 
 	// --- provision ----------------------------------------------------------------------
 	names := r.connectorNames(svc, trigger, c.Perf != nil && c.Perf.Executor == "k6", c.UsesUI())

@@ -1,0 +1,43 @@
+# Sinh tự động bởi `testkit gen` từ testkit/services/order-worker.yaml (mục conformance, mẫu crash-mid-job).
+# Đừng sửa tay: sửa mô tả service rồi chạy lại `testkit gen`. Case ở trạng thái draft;
+# `testkit admit` kiểm bằng đột biến, người duyệt mới chạy `testkit admit --approve --by <tên>`.
+id: TC-STD-ORDER-WORKER-CRASH
+title: Tiến trình chết giữa chừng (crash_after_db_commit) — job được giao lại, hiệu ứng vẫn đúng một lần
+requirement: REQ-STD
+risk: P0
+status: draft
+owner: qc-lead
+service: order-worker
+purpose: >-
+  Tiến trình chết đột ngột ở điểm "crash_after_db_commit" (failpoint, chỉ có trong image test) khi đang xử lý job. Sau khi được khởi động lại, job phải được giao lại (offset/ack/lease chưa hoàn tất) và phần việc còn thiếu được hoàn tất; những gì đã xảy ra trước khi chết không được lặp lại.
+preconditions:
+  - Image test (build tag failpoint) chạy với TK_FAILPOINTS=crash_after_db_commit=once
+  - Container có restart policy on-failure:3 (mô phỏng orchestrator khởi động lại)
+  - 1 job có dữ liệu nghiệp vụ theo conformance.given
+trigger: [kafka, db-poll, rabbitmq, redis]
+input: {}
+failpoints: [crash_after_db_commit=once]
+sut: {restart: 'on-failure:3'}
+given:
+  postgres.order:
+    - {id: "k1", customer_email: "cust-k1+{{ .ns }}@shop.test", amount_cents: 1500, currency: USD, status: pending}
+  mock.payment: [201]
+steps:
+  - step: trigger.enqueue
+    with: {id: k1}
+expect:
+  - {id: A1, check: 'sut.log(failpoint: crashing after db commit).count', eq: 1, why: Tiến trình thực sự đã chết đúng chỗ (bằng chứng trong log)}
+  - {id: A2, check: sut.restarts, eq: 1, why: Container được khởi động lại đúng một lần}
+  - {id: A3, check: postgres.order.k1.status, eq: paid, why: Đơn k1 được thanh toán}
+  - {id: A4, check: es.order.k1.status, eq: paid, why: Đơn k1 đã được index}
+  - {id: A5, check: postgres.order.count(status=paid), eq: 1, why: 'Cả 1 đơn đều được thanh toán, không đơn nào bị mất'}
+  - {id: A6, check: mock.payment.succeeded, eq: 1, why: Trừ tiền đúng một lần cho mỗi đơn (không trừ trùng)}
+  - {id: A7, check: kafka.order-events.count, eq: 1, why: 'Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)'}
+  - {id: A8, check: clickhouse.order_event.count(order_id=k1), eq: 1, why: Đơn k1 có đúng một dòng phân tích}
+  - {id: A9, check: trigger.backlog, eq: 0, why: 'Job được giao lại và xử lý xong, không còn tồn đọng'}
+  - {id: A10, check: trigger.dlq, eq: 0, why: Chết giữa chừng không được biến thành dead-letter}
+evidence: {grafana: [jobs_total, side_effects_total, payment_calls_total]}
+within: 60s
+mutations:
+  - {id: M1, failpoint: skip_paid_check, title: Bỏ kiểm tra đơn đã paid (giao lại sau crash bị trừ tiền lần hai), expect_red: [A6]}
+generated: {by: testkit gen, sources: [testkit/services/order-worker.yaml#conformance.patterns.crash-mid-job]}

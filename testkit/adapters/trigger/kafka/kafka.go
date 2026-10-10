@@ -367,7 +367,7 @@ func (k *Connector) Teardown(ctx context.Context) error {
 type Trigger struct {
 	env  *kit.Env
 	c    *Client
-	spec struct{ topic, group, key, value string }
+	spec struct{ topic, group, key, value, dlq string }
 }
 
 func NewTrigger() kit.Connector { return &Trigger{} }
@@ -381,6 +381,9 @@ func (t *Trigger) Provision(ctx context.Context, env *kit.Env) error {
 		return fmt.Errorf("service %s declares no kafka trigger", env.Service.Name)
 	}
 	t.spec.topic, t.spec.group, t.spec.key, t.spec.value = env.NS.Topic(ts.Topic), env.NS.Group(ts.Group), ts.Key, ts.Value
+	if ts.DLQ != "" {
+		t.spec.dlq = env.NS.Topic(ts.DLQ)
+	}
 	var err error
 	t.c, err = dial(env.Runner.KafkaBrokers)
 	return err
@@ -435,6 +438,19 @@ func (t *Trigger) Drain(ctx context.Context) error {
 	}
 }
 
+// Backlog is the consumer lag of the service's group.
+func (t *Trigger) Backlog(ctx context.Context) (int64, error) {
+	return t.c.Lag(ctx, t.spec.group, t.spec.topic)
+}
+
+// DeadLetters is the number of records in the declared dead-letter topic.
+func (t *Trigger) DeadLetters(ctx context.Context) (int64, error) {
+	if t.spec.dlq == "" {
+		return 0, fmt.Errorf("triggers.kafka declares no dlq (the logical name of the dead-letter topic)")
+	}
+	return t.c.Count(ctx, t.spec.dlq)
+}
+
 func (t *Trigger) Collect(context.Context, kit.TimeWindow) ([]kit.Artifact, error) { return nil, nil }
 
 func (t *Trigger) Teardown(context.Context) error {
@@ -447,4 +463,5 @@ var (
 	_ kit.Connector        = (*Connector)(nil)
 	_ kit.Checker          = (*Connector)(nil)
 	_ kit.TriggerConnector = (*Trigger)(nil)
+	_ kit.TriggerState     = (*Trigger)(nil)
 )
