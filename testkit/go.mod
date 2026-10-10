@@ -7,6 +7,7 @@ require (
 	github.com/coder/websocket v1.8.12
 	github.com/getkin/kin-openapi v0.128.0
 	github.com/jackc/pgx/v5 v5.7.2
+	github.com/rabbitmq/amqp091-go v1.15.0
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/spf13/cobra v1.9.1
 	github.com/twmb/franz-go v1.18.1

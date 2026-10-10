@@ -88,6 +88,7 @@ type Stores struct {
 	ClickHouse    *CHStore       `yaml:"clickhouse"`
 	Mongo         *MongoStore    `yaml:"mongo"`
 	Redis         *RedisStore    `yaml:"redis"`
+	RabbitMQ      *RabbitStore   `yaml:"rabbitmq"`
 }
 
 // Names returns the declared stores, i.e. the compose services to start.
@@ -98,6 +99,9 @@ func (s Stores) Names() []string {
 	}
 	if s.Kafka != nil {
 		out = append(out, "kafka")
+	}
+	if s.RabbitMQ != nil {
+		out = append(out, "rabbitmq")
 	}
 	if s.Elasticsearch != nil {
 		out = append(out, "elasticsearch")
@@ -149,6 +153,30 @@ type MongoStore struct {
 
 type RedisStore struct {
 	Snapshot bool `yaml:"snapshot"` // dump keys under the run prefix into evidence
+	// Queues are Redis streams or lists the service consumes. TestKit creates
+	// a stream's consumer group up front and checks depth/pending on them.
+	Queues []RedisQueue `yaml:"queues"`
+}
+
+// RedisQueue declares a Redis queue under the namespace prefix.
+type RedisQueue struct {
+	Name       string `yaml:"name"`
+	Kind       string `yaml:"kind"`       // stream | list
+	Group      string `yaml:"group"`      // stream: consumer group of the service
+	Processing string `yaml:"processing"` // list: in-flight list of the reliable pattern (default <name>:processing)
+	DLQ        string `yaml:"dlq"`        // dead-letter queue of the same kind (optional)
+}
+
+// RabbitStore declares the queues created in the execution's vhost.
+type RabbitStore struct {
+	Queues []RabbitQueue `yaml:"queues"`
+}
+
+// RabbitQueue is a durable queue; with dlq, rejected messages are routed to
+// the named queue (dead-lettering through the default exchange).
+type RabbitQueue struct {
+	Name string `yaml:"name"`
+	DLQ  string `yaml:"dlq"`
 }
 
 // MockSpec declares a third party the service talks to.
@@ -173,7 +201,10 @@ type TriggerSpec struct {
 	Key   string `yaml:"key"`   // kafka: template of the record key
 	Value string `yaml:"value"` // kafka: template of the record value
 	SQL   string `yaml:"sql"`   // db-poll: insert statement (template)
-	Group string `yaml:"group"` // kafka: consumer group used for lag checks
+	Group string `yaml:"group"` // kafka: consumer group used for lag checks (redis stream: consumer group)
+	// Queue names the declared queue of a rabbitmq or redis trigger; Value is
+	// the message body template, Key the message id / stream field template.
+	Queue string `yaml:"queue"`
 	Table string `yaml:"table"` // db-poll: job table used for drain checks
 	// Drained: SQL returning the number of jobs not yet in a terminal state.
 	Drained string `yaml:"drained"`
@@ -322,8 +353,28 @@ func (s *Service) Validate() error {
 			if s.Stores.Postgres == nil {
 				add("triggers.db-poll requires stores.postgres")
 			}
+		case "rabbitmq":
+			if t.Queue == "" || t.Value == "" {
+				add("triggers.rabbitmq needs queue and value")
+			} else if s.Stores.RabbitMQ == nil {
+				add("triggers.rabbitmq requires stores.rabbitmq")
+			} else if !hasRabbitQueue(s.Stores.RabbitMQ, t.Queue) {
+				add("triggers.rabbitmq.queue %q is not declared in stores.rabbitmq.queues", t.Queue)
+			}
+		case "redis":
+			if t.Queue == "" || t.Value == "" {
+				add("triggers.redis needs queue and value")
+			} else if s.Stores.Redis == nil {
+				add("triggers.redis requires stores.redis")
+			} else if q, ok := redisQueue(s.Stores.Redis, t.Queue); !ok {
+				add("triggers.redis.queue %q is not declared in stores.redis.queues", t.Queue)
+			} else if q.Kind != "stream" && q.Kind != "list" {
+				add("stores.redis.queues.%s.kind must be stream or list", q.Name)
+			} else if q.Kind == "stream" && q.Group == "" {
+				add("stores.redis.queues.%s: a stream needs a group", q.Name)
+			}
 		default:
-			add("unknown trigger %q (kafka | db-poll)", name)
+			add("unknown trigger %q (kafka | db-poll | rabbitmq | redis)", name)
 		}
 	}
 	for name, r := range s.Reconcile {
@@ -388,6 +439,35 @@ func (s *Service) MockComponents() []string {
 		}
 	}
 	return SortedKeys(set)
+}
+
+func hasRabbitQueue(r *RabbitStore, name string) bool {
+	for _, q := range r.Queues {
+		if q.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// RedisQueueOf returns a declared Redis queue by name.
+func (s *Service) RedisQueueOf(name string) (RedisQueue, bool) {
+	if s.Stores.Redis == nil {
+		return RedisQueue{}, false
+	}
+	return redisQueue(s.Stores.Redis, name)
+}
+
+func redisQueue(r *RedisStore, name string) (RedisQueue, bool) {
+	for _, q := range r.Queues {
+		if q.Name == name {
+			if q.Processing == "" {
+				q.Processing = q.Name + ":processing"
+			}
+			return q, true
+		}
+	}
+	return RedisQueue{}, false
 }
 
 // LoadServices loads every *.yaml in dir, keyed by service name.

@@ -152,6 +152,24 @@ services:
       <<: *hc
       test: ["CMD", "redis-cli", "ping"]
 
+  # One vhost per execution isolates queues; statistics refresh every 500 ms so
+  # `ready`/`unacked` checks and drain detection do not lag by the 5 s default.
+  rabbitmq:
+    profiles: [stores]
+    image: ${RABBITMQ_IMAGE}
+    labels: { <<: *managed, testkit.component: rabbitmq }
+    environment:
+      RABBITMQ_DEFAULT_USER: ${TK_RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${TK_RABBITMQ_PASSWORD}
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit collect_statistics_interval 500"
+    ports:
+      - "127.0.0.1:${TK_PORT_RABBITMQ}:5672"
+      - "127.0.0.1:${TK_PORT_RABBITMQ_MGMT}:15672"
+    tmpfs: ["/var/lib/rabbitmq"]
+    healthcheck:
+      <<: *hc
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+
   # ----------------------------------------------------------------- mocks
   mailpit:
     profiles: [mocks]
