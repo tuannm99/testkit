@@ -15,7 +15,7 @@ vars:
 input:
   order: { id: o6, customer_email: "{{ .vars.customer }}", amount_cents: 700, currency: USD, status: pending }
   job: { id: o6 }
-trigger: [kafka, db-poll]
+trigger: [kafka, db-poll, rabbitmq, redis]
 given:
   postgres.order: ["{{ .input.order }}"]
   mock.payment: ["201(delay=2s)"]

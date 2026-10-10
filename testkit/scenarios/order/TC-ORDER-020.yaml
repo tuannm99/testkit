@@ -18,7 +18,7 @@ vars:
 input:
   order: { id: o3, customer_email: "{{ .vars.customer }}", amount_cents: 4200, currency: EUR, status: pending }
   job: { id: o3 }
-trigger: [kafka, db-poll]
+trigger: [kafka, db-poll, rabbitmq, redis]
 failpoints: [crash_after_db_commit=once]
 sut: { restart: "on-failure:3" }
 given:

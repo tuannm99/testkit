@@ -5,6 +5,7 @@
 # its own namespace (database, topics, consumer group, index, mock base URL):
 #   {{ .NS }}  {{ .RunID }}  {{ pgdsn }}  {{ brokers }}  {{ topic "x" }}
 #   {{ group "x" }}  {{ index "x" }}  {{ mock "x" }}  {{ smtp }}  {{ es }}
+#   {{ amqp }}  {{ rkey "x" }}
 apiVersion: testkit/v1
 kind: Service
 name: order-worker
@@ -44,6 +45,12 @@ stores:
     snapshot: [audit]
   redis:
     snapshot: true
+    queues:
+      - { name: orders-stream, kind: stream, group: order-worker, dlq: orders-stream-dlq }
+      - { name: orders-list, kind: list, processing: "orders-list:processing", dlq: orders-list-dlq }
+  rabbitmq:
+    queues:
+      - { name: orders, dlq: orders.dlq }
 
 mocks:
   payment:
@@ -74,6 +81,14 @@ triggers:
     topic: orders
     group: order-worker
     key: "{{ .job.order_id }}"
+    value: '{"job_id":"{{ .job.id }}","order_id":"{{ .job.order_id }}","enqueued_at":"{{ .now }}"}'
+  rabbitmq:
+    queue: orders
+    key: "{{ .job.id }}"
+    value: '{"job_id":"{{ .job.id }}","order_id":"{{ .job.order_id }}","enqueued_at":"{{ .now }}"}'
+  redis:
+    queue: orders-stream
+    key: "{{ .job.id }}"
     value: '{"job_id":"{{ .job.id }}","order_id":"{{ .job.order_id }}","enqueued_at":"{{ .now }}"}'
   db-poll:
     table: jobs
@@ -110,6 +125,7 @@ failpoints:
   skip_cache_invalidate: the Redis status cache is not refreshed when a refund arrives
   ws_no_resend: unacked notifications are not resent after a reconnect
   ws_no_heartbeat: a silent (half-open) WebSocket connection is never detected
+  drop_dead_letters: a message that cannot be processed is acknowledged and dropped instead of dead-lettered
   outage_is_failure: a store outage (database unreachable) consumes delivery attempts and can dead-letter the job
 
 env:
@@ -117,7 +133,13 @@ env:
   TESTKIT_RUN_ID: "{{ .RunID }}"
   HTTP_ADDR: ":8080"
   DATABASE_URL: "{{ pgdsn }}"
-  TRIGGERS: kafka,dbpoll
+  TRIGGERS: kafka,dbpoll,rabbitmq,redis
+  RABBITMQ_URL: "{{ amqp }}"
+  RABBITMQ_QUEUE: orders
+  REDIS_QUEUE: '{{ rkey "orders-stream" }}'
+  REDIS_QUEUE_KIND: stream
+  REDIS_QUEUE_GROUP: order-worker
+  REDIS_QUEUE_DLQ: '{{ rkey "orders-stream-dlq" }}'
   KAFKA_BROKERS: "{{ brokers }}"
   KAFKA_TOPIC: '{{ topic "orders" }}'
   KAFKA_GROUP: '{{ group "order-worker" }}'

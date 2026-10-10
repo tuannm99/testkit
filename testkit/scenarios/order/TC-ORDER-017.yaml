@@ -19,7 +19,7 @@ vars:
 input:
   order: { id: o1, customer_email: "{{ .vars.customer }}", amount_cents: 1500, currency: USD, status: pending }
   job: { id: o1, duplicate: 2 }
-trigger: [kafka, db-poll]
+trigger: [kafka, db-poll, rabbitmq, redis]
 given:
   postgres.order: ["{{ .input.order }}"]
   mock.payment: [500, 429(retry-after=2), 201]

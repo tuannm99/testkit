@@ -14,11 +14,16 @@ import (
 	"testing"
 	"time"
 
+	amqp "github.com/rabbitmq/amqp091-go"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/tuannm99/testkit/testkit/adapters/store/postgres"
+	"github.com/tuannm99/testkit/testkit/adapters/store/redis"
 	"github.com/tuannm99/testkit/testkit/adapters/trigger/dbpoll"
 	"github.com/tuannm99/testkit/testkit/adapters/trigger/kafka"
+	"github.com/tuannm99/testkit/testkit/adapters/trigger/rabbitmq"
+	"github.com/tuannm99/testkit/testkit/adapters/trigger/redisq"
 	"github.com/tuannm99/testkit/testkit/core/config"
 	"github.com/tuannm99/testkit/testkit/core/evidence"
 	"github.com/tuannm99/testkit/testkit/core/kit"
@@ -29,9 +34,11 @@ import (
 type consumer func(ctx context.Context, env *kit.Env) (int, error)
 
 type triggerCase struct {
-	name    string
-	factory kit.Factory
-	consume consumer
+	name       string
+	factory    kit.Factory
+	consume    consumer
+	stores     []kit.Factory // store connectors the trigger needs besides Postgres and Kafka
+	redisQueue string        // declared Redis queue the "redis" trigger uses
 }
 
 func project(t *testing.T) *config.Project {
@@ -43,7 +50,7 @@ func project(t *testing.T) *config.Project {
 	return p
 }
 
-func env(t *testing.T, ns string) *kit.Env {
+func env(t *testing.T, ns, redisQueue string) *kit.Env {
 	p := project(t)
 	dir := t.TempDir()
 	mig := filepath.Join(dir, "mig")
@@ -52,10 +59,16 @@ func env(t *testing.T, ns string) *kit.Env {
 		status text NOT NULL DEFAULT 'queued');`), 0o644)
 	svc := &config.Service{Name: "contract", Dir: dir,
 		Stores: config.Stores{Postgres: &config.PostgresStore{Migrations: "mig", Snapshot: []string{"jobs"}},
-			Kafka: &config.KafkaStore{Topics: []config.KafkaTopic{{Name: "jobs", Partitions: 2}}, Groups: []string{"svc"}}},
+			Kafka:    &config.KafkaStore{Topics: []config.KafkaTopic{{Name: "jobs", Partitions: 2}}, Groups: []string{"svc"}},
+			RabbitMQ: &config.RabbitStore{Queues: []config.RabbitQueue{{Name: "jobs", DLQ: "jobs.dlq"}}},
+			Redis: &config.RedisStore{Queues: []config.RedisQueue{
+				{Name: "jobs-stream", Kind: "stream", Group: "svc", DLQ: "jobs-stream-dlq"},
+				{Name: "jobs-list", Kind: "list", Processing: "jobs-list:processing"}}}},
 		Triggers: map[string]config.TriggerSpec{
-			"kafka":   {Topic: "jobs", Group: "svc", Key: "{{ .job.id }}", Value: `{"id":"{{ .job.id }}"}`},
-			"db-poll": {SQL: "INSERT INTO jobs (job_key) VALUES ('{{ .job.id }}')", Drained: "SELECT count(*) FROM jobs WHERE status <> 'done'"},
+			"rabbitmq": {Queue: "jobs", Key: "{{ .job.id }}", Value: `{"id":"{{ .job.id }}"}`},
+			"redis":    {Queue: redisQueue, Key: "{{ .job.id }}", Value: `{"id":"{{ .job.id }}"}`},
+			"kafka":    {Topic: "jobs", Group: "svc", Key: "{{ .job.id }}", Value: `{"id":"{{ .job.id }}"}`},
+			"db-poll":  {SQL: "INSERT INTO jobs (job_key) VALUES ('{{ .job.id }}')", Drained: "SELECT count(*) FROM jobs WHERE status <> 'done'"},
 		}}
 	ev, _ := evidence.Open(dir, "r00000000-000000-ctr")
 	return &kit.Env{RunID: "r00000000-000000-ctr", NS: kit.Namespace(ns), CaseID: "TC-CONTRACT-1", Project: p, Service: svc,
@@ -89,6 +102,81 @@ var triggers = []triggerCase{
 		tag, err := pool.Exec(ctx, "UPDATE jobs SET status = 'done' WHERE status = 'queued'")
 		return int(tag.RowsAffected()), err
 	}},
+	{name: "rabbitmq", factory: rabbitmq.NewTrigger, stores: []kit.Factory{rabbitmq.New}, consume: func(ctx context.Context, env *kit.Env) (int, error) {
+		conn, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s/%s", env.Runner.RabbitUser, env.Runner.RabbitPass, env.Runner.RabbitAMQP, env.NS))
+		if err != nil {
+			return 0, err
+		}
+		defer conn.Close()
+		ch, err := conn.Channel()
+		if err != nil {
+			return 0, err
+		}
+		msgs, err := ch.Consume("jobs", "", false, false, false, false, nil)
+		if err != nil {
+			return 0, err
+		}
+		n := 0
+		for n < 4 {
+			select {
+			case d := <-msgs:
+				if err := d.Ack(false); err != nil {
+					return n, err
+				}
+				n++
+			case <-ctx.Done():
+				return n, ctx.Err()
+			}
+		}
+		return n, nil
+	}},
+	{name: "redis-stream", factory: redisq.New, stores: []kit.Factory{redis.New}, redisQueue: "jobs-stream",
+		consume: func(ctx context.Context, env *kit.Env) (int, error) {
+			cl := goredis.NewClient(&goredis.Options{Addr: env.Runner.Redis})
+			defer cl.Close()
+			key := env.NS.KeyPrefix() + "jobs-stream"
+			n := 0
+			for n < 4 && ctx.Err() == nil {
+				res, err := cl.XReadGroup(ctx, &goredis.XReadGroupArgs{Group: "svc", Consumer: "c1", Streams: []string{key, ">"},
+					Count: 4, Block: 500 * time.Millisecond}).Result()
+				if err == goredis.Nil {
+					continue
+				}
+				if err != nil {
+					return n, err
+				}
+				for _, st := range res {
+					for _, m := range st.Messages {
+						if err := cl.XAck(ctx, key, "svc", m.ID).Err(); err != nil {
+							return n, err
+						}
+						n++
+					}
+				}
+			}
+			return n, ctx.Err()
+		}},
+	{name: "redis-list", factory: redisq.New, stores: []kit.Factory{redis.New}, redisQueue: "jobs-list",
+		consume: func(ctx context.Context, env *kit.Env) (int, error) {
+			cl := goredis.NewClient(&goredis.Options{Addr: env.Runner.Redis})
+			defer cl.Close()
+			key, proc := env.NS.KeyPrefix()+"jobs-list", env.NS.KeyPrefix()+"jobs-list:processing"
+			n := 0
+			for n < 4 && ctx.Err() == nil {
+				body, err := cl.BLMove(ctx, key, proc, "RIGHT", "LEFT", 500*time.Millisecond).Result()
+				if err == goredis.Nil {
+					continue
+				}
+				if err != nil {
+					return n, err
+				}
+				if err := cl.LRem(ctx, proc, 1, body).Err(); err != nil {
+					return n, err
+				}
+				n++
+			}
+			return n, ctx.Err()
+		}},
 }
 
 func requireStack(t *testing.T) {
@@ -106,12 +194,19 @@ func TestTriggerContract(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			e := env(t, fmt.Sprintf("tk_contract_%d_%d", time.Now().Unix()%100000, i))
+			e := env(t, fmt.Sprintf("tk_contract_%d_%d", time.Now().Unix()%100000, i), tc.redisQueue)
 			pg, kf := postgres.New(), kafka.New()
 			for _, c := range []kit.Connector{pg, kf} {
 				if err := c.Provision(ctx, e); err != nil {
 					t.Fatalf("provision %s: %v", c.Name(), err)
 				}
+			}
+			for _, f := range tc.stores {
+				c := f()
+				if err := c.Provision(ctx, e); err != nil {
+					t.Fatalf("provision %s: %v", c.Name(), err)
+				}
+				defer c.Teardown(context.Background()) //nolint:errcheck
 			}
 			defer func() {
 				_ = kf.Teardown(context.Background())
