@@ -1,0 +1,36 @@
+id: TC-QUEUE-001
+title: Message độc trên RabbitMQ vào DLQ, không chặn job phía sau
+requirement: REQ-234
+risk: P1
+status: draft
+owner: qc-lead
+service: order-worker
+purpose: >
+  Một message không đọc được trên queue orders phải bị từ chối không requeue (broker chuyển sang orders.dlq),
+  không bị gửi lại vô tận, và job hợp lệ phía sau vẫn được xử lý.
+preconditions:
+  - Message độc đứng trước job hợp lệ trong cùng queue
+vars:
+  customer: "cust-q1+{{ .ns }}@shop.test"
+input:
+  order: { id: q1, customer_email: "{{ .vars.customer }}", amount_cents: 700, currency: USD, status: pending }
+  poison: "{not json"
+trigger: [rabbitmq]
+given:
+  postgres.order: ["{{ .input.order }}"]
+  mock.payment: [201]
+steps:
+  - step: rabbitmq.publish
+    with: { queue: orders, body: "{{ .input.poison }}" }
+  - step: trigger.enqueue
+    with: { id: q1 }
+expect:
+  - { id: A1, check: rabbitmq.orders.dlq.ready, eq: 1, why: "Message độc nằm trong DLQ" }
+  - { id: A2, check: postgres.order.q1.status, eq: paid, why: "Job hợp lệ phía sau không bị chặn" }
+  - { id: A3, check: rabbitmq.orders.depth, eq: 0, why: "Không còn gì chờ hoặc đang xử lý (message độc không bị gửi lại)" }
+  - { id: A4, check: rabbitmq.orders.redelivered, eq: 0, why: "Message độc không bị giao lại" }
+evidence:
+  grafana: [jobs_total, side_effects_total]
+within: 30s
+mutations:
+  - { id: M1, failpoint: drop_dead_letters, title: "Message không xử lý được bị bỏ thay vì chuyển DLQ", expect_red: [A1] }

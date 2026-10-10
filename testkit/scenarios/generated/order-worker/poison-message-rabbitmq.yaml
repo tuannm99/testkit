@@ -1,0 +1,44 @@
+# Sinh tự động bởi `testkit gen` từ testkit/services/order-worker.yaml (mục conformance, mẫu poison-message).
+# Đừng sửa tay: sửa mô tả service rồi chạy lại `testkit gen`. Case ở trạng thái draft;
+# `testkit admit` kiểm bằng đột biến, người duyệt mới chạy `testkit admit --approve --by <tên>`.
+id: TC-STD-ORDER-WORKER-POISON-RABBITMQ
+title: Message độc qua rabbitmq vào DLQ, không chặn job hợp lệ phía sau
+requirement: REQ-STD
+risk: P1
+status: draft
+owner: qc-lead
+service: order-worker
+purpose: >-
+  Một message không đọc được (hỏng định dạng) đứng trước một job hợp lệ. Message độc không bao giờ xử lý được nên phải bị chuyển sang nơi dead-letter đã khai báo (không được mất lặng lẽ, không được thử lại vô tận, không được chặn hàng đợi), còn job hợp lệ phía sau vẫn hoàn tất đúng một lần.
+preconditions:
+  - Một job hợp lệ k1 có dữ liệu nghiệp vụ theo conformance.given
+  - Message độc được đưa vào hàng đợi trước job hợp lệ
+trigger: [rabbitmq]
+input: {}
+vars:
+  customer_k1: cust-k1+{{ .ns }}@shop.test
+given:
+  postgres.order:
+    - {id: "k1", customer_email: "cust-k1+{{ .ns }}@shop.test", amount_cents: 1500, currency: USD, status: pending}
+  mock.payment: [201]
+steps:
+  - step: rabbitmq.publish
+    name: đưa message độc vào hàng đợi
+    with: {queue: orders, body: '{not json'}
+  - step: trigger.enqueue
+    with: {id: k1}
+expect:
+  - {id: A1, check: trigger.dlq, eq: 1, why: Message độc nằm ở nơi dead-letter (đúng một)}
+  - {id: A2, check: postgres.order.k1.status, eq: paid, why: Đơn k1 được thanh toán}
+  - {id: A3, check: es.order.k1.status, eq: paid, why: Đơn k1 đã được index}
+  - {id: A4, check: postgres.order.count(status=paid), eq: 1, why: 'Cả 1 đơn đều được thanh toán, không đơn nào bị mất'}
+  - {id: A5, check: mock.payment.succeeded, eq: 1, why: Trừ tiền đúng một lần cho mỗi đơn (không trừ trùng)}
+  - {id: A6, check: mail.to(customer_k1).count, eq: 1, why: Khách của đơn k1 nhận đúng một mail}
+  - {id: A7, check: kafka.order-events.count, eq: 1, why: 'Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)'}
+  - {id: A8, check: clickhouse.order_event.count(order_id=k1), eq: 1, why: Đơn k1 có đúng một dòng phân tích}
+  - {id: A9, check: trigger.backlog, eq: 0, why: 'Không còn gì chờ hoặc đang xử lý: message độc không bị thử lại mãi'}
+evidence: {grafana: [jobs_total, side_effects_total, payment_calls_total]}
+within: 45s
+mutations:
+  - {id: M1, failpoint: drop_dead_letters, title: Message không xử lý được bị bỏ thay vì chuyển DLQ, expect_red: [A1]}
+generated: {by: testkit gen, sources: [testkit/services/order-worker.yaml#conformance.patterns.poison-message]}

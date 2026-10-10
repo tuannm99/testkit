@@ -176,6 +176,23 @@ type Mutation struct {
 	Failpoint string   `yaml:"failpoint"`
 	Title     string   `yaml:"title"`
 	ExpectRed []string `yaml:"expect_red"` // assertion ids that must fail (empty: any)
+	// Triggers restricts the mutation to these triggers (empty: all). Use it when the failpoint
+	// changes a code path that only some triggers have: a mutation that cannot apply to a trigger
+	// is not a case that fails to detect it.
+	Triggers []string `yaml:"triggers"`
+}
+
+// AppliesTo reports whether the mutation is run through the given trigger.
+func (m Mutation) AppliesTo(trigger string) bool {
+	if len(m.Triggers) == 0 {
+		return true
+	}
+	for _, t := range m.Triggers {
+		if t == trigger {
+			return true
+		}
+	}
+	return false
 }
 
 // Admission records the mutation-gate run that preceded a person's approval.

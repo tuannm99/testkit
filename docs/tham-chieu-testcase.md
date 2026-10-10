@@ -19,7 +19,7 @@ Testcase là một tệp YAML trong `testkit/scenarios/` (thư mục con tuỳ �
 | `preconditions` | có | Danh sách trạng thái giả định trước các bước |
 | `vars` | | Biến tự đặt, dùng lại trong case (`{{ .vars.customer }}`); có thể tham chiếu biến khác |
 | `input` | có | Dữ liệu đầu vào (`input: {}` nếu không có); được render theo lần chạy và ghi vào báo cáo |
-| `trigger` | | Đường giao job: `kafka`, `db-poll` hoặc danh sách. Case chạy một lần cho **mỗi** trigger và kết quả phải giống nhau |
+| `trigger` | | Đường giao job: `kafka`, `db-poll`, `rabbitmq`, `redis` hoặc danh sách (service nhận job bằng cách nào thì liệt kê cách đó; `--trigger <tên>` chỉ chạy các case có khai báo trigger đó). Case chạy một lần cho **mỗi** trigger và kết quả phải giống nhau |
 | `given` | | Chuẩn bị nhanh (xem bên dưới) |
 | `steps` | | Các bước theo thứ tự |
 | `expect` | | Kỳ vọng — quyết định pass/fail |
@@ -76,9 +76,10 @@ steps:
 | Chờ / kiểm giữa chừng | `wait.until` (check + toán tử, `within`) · `assert` (`expect: [...]`, `within`) · `assert.during` (`for`, `expect: [...]`) — điều kiện phải đúng **liên tục** trong khoảng thời gian |
 | Postgres | `postgres.insert` rows [entity, table] · `postgres.exec` sql [args] · `postgres.query` sql |
 | Kafka | `kafka.produce` topic, value [key, headers, count] |
+| RabbitMQ | `rabbitmq.publish` queue, body [count, message_id, headers] |
 | Elasticsearch | `es.insert` entity, rows · `es.refresh` index · `es.block_writes` index [enabled] |
 | ClickHouse | `clickhouse.exec` sql · `clickhouse.optimize` table [final] |
-| Redis | `redis.set` key, value [ttl] · `redis.del` key · `redis.expire` key [ttl] |
+| Redis | `redis.set` key, value [ttl] · `redis.del` key · `redis.expire` key [ttl] · `redis.enqueue` queue, value [count, id] (đẩy vào hàng đợi stream/list đã khai báo) |
 | Mongo | `mongo.insert` entity, rows |
 | Mock HTTP/webhook | `mock.script` mock [responses, rules, method, path, operation] · `webhook.send` mock, url, body [sign: valid (mặc định)\|invalid\|none, header, repeat, delay, method, headers] |
 | SMTP | `mail.script` behaviours: `ok`, `451@data`, `550@rcpt`, `disconnect@data`, `slow(2s)` (mỗi phiên SMTP một hành vi) |
@@ -134,10 +135,12 @@ Dạng chung: `<nguồn>.<đối tượng>[.<mã>].<thuộc tính>` hoặc `...c
 |---|---|
 | `postgres` | `postgres.order.o1.status`, `postgres.order.o1.exists`, `postgres.order.count(status=paid)` |
 | `kafka` | `kafka.order-events.count(key=o1)`, `kafka.topic(orders.dlq).count`, `kafka.lag(order-worker)` |
+| `trigger` | `trigger.backlog` (job chưa xong: đang chờ + đang xử lý), `trigger.dlq` (job service đã bỏ cuộc, ở nơi dead-letter đã khai báo). **Trung lập với công nghệ**: cùng một câu check đúng cho Kafka, db-poll, RabbitMQ và Redis, nên một case viết một lần chạy được qua mọi trigger. Khai báo cần có: bảng ở mục `triggers` của [tham-chieu-service.md](tham-chieu-service.md) |
+| `rabbitmq` | `rabbitmq.<queue>.ready`, `.unacked`, `.depth`, `.consumers`, `.published`, `.acked`, `.redelivered`, `rabbitmq.<queue>.dlq.ready`, `.dlq.messages` |
 | `es` | `es.order.o1.status`, `es.order.count(status=paid)` |
 | `clickhouse` | `clickhouse.order_event.count(order_id=o1)`, `clickhouse.order_event.duplicates` |
 | `mongo` | `mongo.audit.count(order_id=o1)` |
-| `redis` | `redis.key(order:o1:status)`, `redis.ttl(lock:o1)`, `redis.count(order:*)` |
+| `redis` | `redis.key(order:o1:status)`, `redis.ttl(lock:o1)`, `redis.count(order:*)`, `redis.queue(<tên>).depth\|waiting\|pending\|total\|dlq\|messages` (hàng đợi stream/list đã khai báo) |
 | `mock` | `mock.payment.calls`, `mock.payment.calls(status=201)`, `.succeeded`, `.schema_errors`, `.idempotency_keys`, `.in_flight`, `mock.psp.webhooks(status=200)` |
 | `mail` | `mail.to(customer).count`, `.subject`, `.text`, `mail.smtp.sessions`, `mail.smtp.delivered` (`customer` có thể là tên biến trong `vars`) |
 | `socket` | `socket.partner.distinct(type=order.paid)`, `.duplicates`, `.connections` |

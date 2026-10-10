@@ -1,0 +1,49 @@
+# Sinh tự động bởi `testkit gen` từ testkit/services/order-worker.yaml (mục conformance, mẫu duplicate-delivery).
+# Đừng sửa tay: sửa mô tả service rồi chạy lại `testkit gen`. Case ở trạng thái draft;
+# `testkit admit` kiểm bằng đột biến, người duyệt mới chạy `testkit admit --approve --by <tên>`.
+id: TC-STD-ORDER-WORKER-DUP
+title: Job giao trùng (3 lần) — hiệu ứng nghiệp vụ chỉ xảy ra đúng một lần
+requirement: REQ-STD
+risk: P0
+status: draft
+owner: qc-lead
+service: order-worker
+purpose: >-
+  Hàng đợi chỉ đảm bảo at-least-once: cùng một job có thể được giao 3 lần (producer gửi lại, consumer chưa kịp ack). Kết quả phải như khi giao một lần: trạng thái hoàn tất đúng, các hiệu ứng phụ (trừ tiền, mail, sự kiện...) xảy ra đúng một lần, không còn tồn đọng và không job nào bị đẩy vào DLQ.
+preconditions:
+  - 2 job (k1, k2) có dữ liệu nghiệp vụ theo conformance.given
+  - Mỗi job được giao 3 lần liên tiếp qua trigger
+trigger: [kafka, db-poll, rabbitmq, redis]
+input: {}
+vars:
+  customer_k1: cust-k1+{{ .ns }}@shop.test
+  customer_k2: cust-k2+{{ .ns }}@shop.test
+given:
+  postgres.order:
+    - {id: "k1", customer_email: "cust-k1+{{ .ns }}@shop.test", amount_cents: 1500, currency: USD, status: pending}
+    - {id: "k2", customer_email: "cust-k2+{{ .ns }}@shop.test", amount_cents: 1500, currency: USD, status: pending}
+  mock.payment: [201]
+steps:
+  - step: trigger.enqueue
+    with: {id: k1, duplicate: 3}
+  - step: trigger.enqueue
+    with: {id: k2, duplicate: 3}
+expect:
+  - {id: A1, check: postgres.order.k1.status, eq: paid, why: Đơn k1 được thanh toán}
+  - {id: A2, check: postgres.order.k2.status, eq: paid, why: Đơn k2 được thanh toán}
+  - {id: A3, check: es.order.k1.status, eq: paid, why: Đơn k1 đã được index}
+  - {id: A4, check: es.order.k2.status, eq: paid, why: Đơn k2 đã được index}
+  - {id: A5, check: postgres.order.count(status=paid), eq: 2, why: 'Cả 2 đơn đều được thanh toán, không đơn nào bị mất'}
+  - {id: A6, check: mock.payment.succeeded, eq: 2, why: Trừ tiền đúng một lần cho mỗi đơn (không trừ trùng)}
+  - {id: A7, check: mail.to(customer_k1).count, eq: 1, why: Khách của đơn k1 nhận đúng một mail}
+  - {id: A8, check: mail.to(customer_k2).count, eq: 1, why: Khách của đơn k2 nhận đúng một mail}
+  - {id: A9, check: kafka.order-events.count, eq: 2, why: 'Đúng một sự kiện order.paid cho mỗi đơn (outbox, không mất, không ma)'}
+  - {id: A10, check: clickhouse.order_event.count(order_id=k1), eq: 1, why: Đơn k1 có đúng một dòng phân tích}
+  - {id: A11, check: clickhouse.order_event.count(order_id=k2), eq: 1, why: Đơn k2 có đúng một dòng phân tích}
+  - {id: A12, check: trigger.backlog, eq: 0, why: Không còn job nào chờ hoặc đang xử lý}
+  - {id: A13, check: trigger.dlq, eq: 0, why: 'Giao trùng không phải lỗi: không job nào vào DLQ'}
+evidence: {grafana: [jobs_total, side_effects_total, payment_calls_total]}
+within: 45s
+mutations:
+  - {id: M1, failpoint: skip_paid_check, title: Bỏ kiểm tra đơn đã paid (giao trùng bị xử lý lại)}
+generated: {by: testkit gen, sources: [testkit/services/order-worker.yaml#conformance.patterns.duplicate-delivery]}

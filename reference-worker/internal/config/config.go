@@ -18,7 +18,7 @@ type Config struct {
 
 	DatabaseURL string
 
-	Triggers []string // kafka, dbpoll
+	Triggers []string // kafka, dbpoll, rabbitmq, redis
 
 	KafkaBrokers     []string
 	KafkaTopic       string
@@ -26,6 +26,19 @@ type Config struct {
 	KafkaDLQTopic    string
 	KafkaMaxAttempts int
 	KafkaSession     time.Duration
+
+	RabbitURL      string
+	RabbitQueue    string
+	RabbitPrefetch int
+	RabbitAttempts int
+
+	RedisQueue       string // full key of the Redis queue trigger
+	RedisQueueKind   string // stream | list
+	RedisGroup       string
+	RedisProcessing  string
+	RedisDLQ         string
+	RedisClaimIdle   time.Duration
+	RedisMaxAttempts int
 
 	PollInterval    time.Duration
 	PollMaxIdle     time.Duration
@@ -82,6 +95,17 @@ func Load() (Config, error) {
 		KafkaDLQTopic:      get("KAFKA_DLQ_TOPIC", ""),
 		KafkaMaxAttempts:   num("KAFKA_MAX_ATTEMPTS", 5, &errs),
 		KafkaSession:       dur("KAFKA_SESSION_TIMEOUT", 45*time.Second, &errs),
+		RabbitURL:          get("RABBITMQ_URL", ""),
+		RabbitQueue:        get("RABBITMQ_QUEUE", ""),
+		RabbitPrefetch:     num("RABBITMQ_PREFETCH", 10, &errs),
+		RabbitAttempts:     num("RABBITMQ_MAX_ATTEMPTS", 5, &errs),
+		RedisQueue:         get("REDIS_QUEUE", ""),
+		RedisQueueKind:     get("REDIS_QUEUE_KIND", "stream"),
+		RedisGroup:         get("REDIS_QUEUE_GROUP", ""),
+		RedisProcessing:    get("REDIS_QUEUE_PROCESSING", ""),
+		RedisDLQ:           get("REDIS_QUEUE_DLQ", ""),
+		RedisClaimIdle:     dur("REDIS_QUEUE_CLAIM_IDLE", 5*time.Second, &errs),
+		RedisMaxAttempts:   num("REDIS_QUEUE_MAX_ATTEMPTS", 5, &errs),
 		PollInterval:       dur("POLL_INTERVAL", 200*time.Millisecond, &errs),
 		PollMaxIdle:        dur("POLL_MAX_IDLE", 2*time.Second, &errs),
 		PollBatch:          num("POLL_BATCH", 10, &errs),
@@ -121,6 +145,21 @@ func Load() (Config, error) {
 	}
 	if c.Has("kafka") && (len(c.KafkaBrokers) == 0 || c.KafkaTopic == "" || c.KafkaGroup == "") {
 		errs = append(errs, "trigger kafka needs KAFKA_BROKERS, KAFKA_TOPIC, KAFKA_GROUP")
+	}
+	if c.Has("rabbitmq") && (c.RabbitURL == "" || c.RabbitQueue == "") {
+		errs = append(errs, "trigger rabbitmq needs RABBITMQ_URL, RABBITMQ_QUEUE")
+	}
+	if c.Has("redis") {
+		switch {
+		case c.RedisAddr == "" || c.RedisQueue == "":
+			errs = append(errs, "trigger redis needs REDIS_ADDR, REDIS_QUEUE")
+		case c.RedisQueueKind == "stream" && c.RedisGroup == "":
+			errs = append(errs, "redis stream trigger needs REDIS_QUEUE_GROUP")
+		case c.RedisQueueKind == "list" && c.RedisProcessing == "":
+			errs = append(errs, "redis list trigger needs REDIS_QUEUE_PROCESSING")
+		case c.RedisQueueKind != "stream" && c.RedisQueueKind != "list":
+			errs = append(errs, "REDIS_QUEUE_KIND must be stream or list")
+		}
 	}
 	if len(errs) > 0 {
 		return c, fmt.Errorf("config: %s", strings.Join(errs, "; "))

@@ -131,7 +131,7 @@ preconditions:
   - Đơn o50 pending; cổng thanh toán (mock theo OpenAPI) trả 500 rồi 201
 input:
   order: { id: o50, customer_email: "cust-o50+{{ .ns }}@shop.test", amount_cents: 5000, currency: USD, status: pending }
-trigger: [kafka, db-poll]          # chạy qua cả hai đường giao job
+trigger: [kafka, db-poll, rabbitmq, redis]   # chạy qua từng đường giao job service hỗ trợ; kết quả phải giống nhau
 given:
   postgres.order: ["{{ .input.order }}"]
   mock.payment: [500, 201]
@@ -241,6 +241,15 @@ expect:
 Trong test, `baseURL` là service đang test (trong mạng Docker). Ảnh chụp màn hình và trace luôn được giữ làm bằng chứng
 và hiện ngay trong báo cáo. Không bật retry trong Playwright: flaky do `--retries` của TestKit phát hiện.
 
+### Bộ case chuẩn (sinh tự động từ mô tả service)
+
+Không cần tính đầu vào/đầu ra cho từng case disruptive. Bạn mô tả **nghiệp vụ của service một lần** (dữ liệu của một job,
+điều đúng khi job xong, hiệu ứng phụ phải xảy ra đúng một lần) trong mục `conformance:` của `testkit/services/<tên>.yaml`;
+`./tk gen --service <tên>` sinh các case nháp: **job giao trùng, message độc → DLQ, chết giữa chừng rồi giao lại, lỗi
+phụ thuộc dưới tải (DB/cổng thanh toán), tới ngược thứ tự và phát lại muộn, tải ổn định so với baseline** — cho mọi
+trigger service có (Kafka, RabbitMQ, Redis, bảng DB). Case sinh ra là `draft`; chạy `./tk run --mutations`, `./tk admit`,
+rồi người duyệt mới `--approve`. Hướng dẫn đầy đủ: [bo-case-chuan.md](bo-case-chuan.md).
+
 ## 8. Bộ release và bàn giao
 
 Tệp suite (`kind: Suite`, ví dụ `testkit/suites/release.yaml`) chọn case, cách chạy và **cổng release**:
@@ -263,9 +272,10 @@ Thêm tệp `testkit/services/<tên>.yaml`, không sửa code lõi. Các bước
 1. Image: tên/tag, hoặc `build` từ thư mục mã nguồn; nếu có failpoint, một image test (`test_tag`, build tag riêng).
 2. Cổng HTTP, health check, metrics.
 3. Kho dữ liệu dùng (migration, topic, index...), mock bên thứ 3 (kèm OpenAPI, phiên bản API, ngày và nguồn kiểm chứng).
-4. Trigger (Kafka/DB poll), entity (để viết `postgres.order.o1.status`...), failpoint, env (dùng hàm như
+4. Trigger (Kafka, RabbitMQ, Redis hoặc bảng DB poll; mỗi trigger khai báo nơi dead-letter để có `trigger.dlq`), entity (để viết `postgres.order.o1.status`...), failpoint, env (dùng hàm như
    `{{ pgdsn }}`, `{{ topic "orders" }}`, `{{ mock "payment" }}` để mỗi lần chạy có namespace riêng).
 5. `./tk up --services <tên>`, viết một case, `./tk plan`, `./tk run`.
+6. Thêm mục `conformance:` rồi `./tk gen --service <tên>` để có ngay bộ case chuẩn ([bo-case-chuan.md](bo-case-chuan.md)).
 
 Tham chiếu đầy đủ: [tham-chieu-service.md](tham-chieu-service.md).
 
@@ -290,6 +300,7 @@ Máy CI cần Docker (runner có quyền mount `docker.sock`). Ví dụ một jo
 ```sh
 ./tk doctor
 ./tk up --services order-worker --profile core,stores,mocks,observability,chaos
+./tk gen --check                           # bộ case sinh ra phải khớp mô tả service (mã thoát 2 nếu lệch)
 ./tk run testkit/suites/release.yaml       # mã thoát quyết định job xanh/đỏ
 # lưu out/*.zip, out/*/junit.xml làm artifact; JUnit cho trang kết quả test của CI
 ./tk down

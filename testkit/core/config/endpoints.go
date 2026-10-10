@@ -33,6 +33,10 @@ type Endpoints struct {
 	CHPassword    string
 	Mongo         string
 	Redis         string
+	RabbitAMQP    string // host:port of the AMQP listener
+	RabbitMgmt    string // management HTTP API base URL
+	RabbitUser    string
+	RabbitPass    string
 	Mockhub       string
 	MockhubSMTP   string
 	MockhubSocket string
@@ -74,6 +78,10 @@ func (p *Project) Endpoints(inNetwork bool) Endpoints {
 		CHUser:        p.Get("TK_CLICKHOUSE_USER"),
 		CHPassword:    p.Get("TK_CLICKHOUSE_PASSWORD"),
 		Redis:         hp("redis", "6379", "TK_PORT_REDIS"),
+		RabbitAMQP:    hp("rabbitmq", "5672", "TK_PORT_RABBITMQ"),
+		RabbitMgmt:    "http://" + hp("rabbitmq", "15672", "TK_PORT_RABBITMQ_MGMT"),
+		RabbitUser:    p.Get("TK_RABBITMQ_USER"),
+		RabbitPass:    p.Get("TK_RABBITMQ_PASSWORD"),
 		Mockhub:       "http://" + hp("mockhub", "8081", "TK_PORT_MOCKHUB"),
 		MockhubSMTP:   hp("mockhub", "2525", "TK_PORT_MOCKHUB_SMTP"),
 		MockhubSocket: hp("mockhub", "8082", "TK_PORT_MOCKHUB_SOCKET"),

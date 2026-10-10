@@ -61,6 +61,6 @@ func newRoot() *cobra.Command {
 	cmd.PersistentFlags().BoolVarP(&g.verbose, "verbose", "v", false, "print every docker command")
 	cmd.AddCommand(newDoctorCmd(g), newAdmitCmd(g), newPackCmd(g), newQCCmd(g), newAICmd(g), newUpCmd(g), newDownCmd(g), newStatusCmd(g),
 		newAnnotateCmd(g), newCollectCmd(g),
-		newLintCmd(g), newPlanCmd(g), newStepsCmd(g), newRunCmd(g), newReportCmd(g), newVerifyCmd(g), newBaselineCmd(g))
+		newLintCmd(g), newGenCmd(g), newPlanCmd(g), newStepsCmd(g), newRunCmd(g), newReportCmd(g), newVerifyCmd(g), newBaselineCmd(g))
 	return cmd
 }

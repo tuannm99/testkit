@@ -17,7 +17,7 @@ vars:
 input:
   order: { id: o4, customer_email: "{{ .vars.customer }}", amount_cents: 1000, currency: USD, status: pending }
   job: { id: o4 }
-trigger: [kafka, db-poll]
+trigger: [kafka, db-poll, rabbitmq, redis]
 sut:
   env: { KAFKA_SESSION_TIMEOUT: 10s }
 given:

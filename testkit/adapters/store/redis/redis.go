@@ -5,6 +5,7 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
@@ -19,6 +20,7 @@ type Connector struct {
 	env    *kit.Env
 	cl     *goredis.Client
 	prefix string
+	queues map[string]*Queue
 }
 
 func New() kit.Connector { return &Connector{} }
@@ -29,12 +31,42 @@ func (c *Connector) CheckPrefixes() []string { return []string{"redis"} }
 func (c *Connector) Provision(ctx context.Context, env *kit.Env) error {
 	c.env, c.prefix = env, env.NS.KeyPrefix()
 	c.cl = goredis.NewClient(&goredis.Options{Addr: env.Runner.Redis})
-	return c.cl.Ping(ctx).Err()
+	if err := c.cl.Ping(ctx).Err(); err != nil {
+		return err
+	}
+	c.queues = map[string]*Queue{}
+	for _, spec := range env.Service.Stores.Redis.Queues {
+		if spec.Processing == "" {
+			spec.Processing = spec.Name + ":processing"
+		}
+		q := NewQueue(c.cl, c.prefix, spec)
+		if err := q.Prepare(ctx); err != nil {
+			return err
+		}
+		c.queues[spec.Name] = q
+	}
+	return nil
 }
 
 func (c *Connector) Health(ctx context.Context) error { return c.cl.Ping(ctx).Err() }
 
 func (c *Connector) Apply(ctx context.Context, s kit.Step) (kit.Result, error) {
+	if s.Name == "redis.enqueue" {
+		q, ok := c.queues[kit.Str(s.With, "queue")]
+		if !ok {
+			return kit.Result{}, fmt.Errorf("redis.enqueue: queue %q is not declared in stores.redis.queues", kit.Str(s.With, "queue"))
+		}
+		var body string
+		switch v := s.With["value"].(type) {
+		case string:
+			body = v
+		default:
+			raw, _ := json.Marshal(v)
+			body = string(raw)
+		}
+		n := kit.Int(s.With, "count", 1)
+		return kit.Result{Note: fmt.Sprintf("%d message(s) to %s", n, q.key)}, q.Enqueue(ctx, body, kit.Str(s.With, "id"), n)
+	}
 	key := c.prefix + kit.Str(s.With, "key")
 	switch s.Name {
 	case "redis.set":
@@ -69,6 +101,13 @@ func (c *Connector) value(ctx context.Context, key string) (any, string, error) 
 	case "set":
 		v, err := c.cl.SMembers(ctx, key).Result()
 		return v, typ, err
+	case "stream":
+		msgs, err := c.cl.XRange(ctx, key, "-", "+").Result()
+		out := make([]map[string]any, len(msgs))
+		for i, m := range msgs {
+			out[i] = map[string]any{"id": m.ID, "values": m.Values}
+		}
+		return out, typ, err
 	case "zset":
 		v, err := c.cl.ZRangeWithScores(ctx, key, 0, -1).Result()
 		return v, typ, err
@@ -82,9 +121,13 @@ func (c *Connector) value(ctx context.Context, key string) (any, string, error) 
 //	redis.exists(<key>)     1 or 0
 //	redis.ttl(<key>)        seconds to live (-1 no expiry, -2 absent)
 //	redis.count(<pattern>)  keys matching the pattern
+//	redis.queue(<name>).depth|waiting|pending|total|dlq|messages   declared queues (see queueCheck)
 func (c *Connector) Check(ctx context.Context, ref kit.CheckRef) (kit.Observation, error) {
 	s := ref.Segments[1]
 	at := time.Now().UTC()
+	if s.Name == "queue" {
+		return c.queueCheck(ctx, ref)
+	}
 	if len(s.Args) != 1 {
 		return kit.Observation{At: at}, fmt.Errorf("expected redis.%s(<key>)", s.Name)
 	}
@@ -117,6 +160,50 @@ func (c *Connector) scan(ctx context.Context, pattern string) ([]string, error) 
 		out = append(out, iter.Val())
 	}
 	return out, iter.Err()
+}
+
+// queueCheck resolves redis.queue(<name>).<property> for a declared queue:
+//
+//	waiting   not yet delivered to a consumer
+//	pending   delivered, not yet acknowledged (stream PEL / list processing)
+//	depth     waiting + pending
+//	total     every entry in the stream (acknowledged included) / list length
+//	dlq       entries in the dead-letter queue
+//	messages  bodies of the dead-letter queue
+func (c *Connector) queueCheck(ctx context.Context, ref kit.CheckRef) (kit.Observation, error) {
+	at := time.Now().UTC()
+	seg := ref.Segments[1]
+	if len(ref.Segments) != 3 || len(seg.Args) != 1 {
+		return kit.Observation{At: at}, fmt.Errorf("expected redis.queue(<name>).<depth|waiting|pending|total|dlq|messages>")
+	}
+	q, ok := c.queues[seg.Args[0]]
+	if !ok {
+		return kit.Observation{At: at}, fmt.Errorf("queue %q is not declared in stores.redis.queues", seg.Args[0])
+	}
+	prop := ref.Segments[2].Name
+	src := fmt.Sprintf("Redis %s %s (%s)", q.spec.Kind, q.key, prop)
+	var v any
+	var raw any
+	var err error
+	switch prop {
+	case "waiting":
+		v, err = q.Waiting(ctx)
+	case "pending":
+		v, err = q.Pending(ctx)
+	case "depth":
+		v, err = q.Depth(ctx)
+	case "total":
+		v, err = q.Total(ctx)
+	case "dlq":
+		v, _, err = q.DeadLetters(ctx)
+	case "messages":
+		var msgs []any
+		_, msgs, err = q.DeadLetters(ctx)
+		v, raw = msgs, msgs
+	default:
+		return kit.Observation{At: at}, fmt.Errorf("unknown redis queue property %q", prop)
+	}
+	return kit.Observation{Value: v, Raw: raw, Source: src, At: time.Now().UTC()}, err
 }
 
 // Collect dumps every key of the namespace.

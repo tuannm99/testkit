@@ -16,7 +16,7 @@ vars:
 input:
   order: { id: o2, customer_email: "{{ .vars.customer }}", amount_cents: 900, currency: USD, status: paid, payment_ref: ch_o2, mail_sent_at: "2026-10-01T00:00:00Z" }
   job: { id: o2 }
-trigger: [kafka, db-poll]
+trigger: [kafka, db-poll, rabbitmq, redis]
 given:
   postgres.order: ["{{ .input.order }}"]
   job: "{{ .input.job }}"

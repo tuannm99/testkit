@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"regexp"
 	"sort"
@@ -62,11 +63,18 @@ func Funcs(env *kit.Env) template.FuncMap {
 		"chpass":    func() string { return in.CHPassword },
 		"mongo":     func() string { return in.Mongo },
 		"redis":     func() string { return in.Redis },
-		"otlp":      func() string { return in.OTLP },
-		"database":  ns.Database,
-		"pguser":    func() string { return in.Postgres.User },
-		"pgpass":    func() string { return in.Postgres.Password },
-		"proxy":     func() (string, error) { return "", fmt.Errorf("{{ proxy }} is only available in chaos.proxies env") },
+		"amqp": func() string {
+			return fmt.Sprintf("amqp://%s:%s@%s/%s", url.PathEscape(in.RabbitUser), url.PathEscape(in.RabbitPass), in.RabbitAMQP, url.PathEscape(string(ns)))
+		},
+		"amqpuser": func() string { return in.RabbitUser },
+		"amqppass": func() string { return in.RabbitPass },
+		"vhost":    func() string { return string(ns) },
+		"rkey":     func(name string) string { return ns.KeyPrefix() + name },
+		"otlp":     func() string { return in.OTLP },
+		"database": ns.Database,
+		"pguser":   func() string { return in.Postgres.User },
+		"pgpass":   func() string { return in.Postgres.Password },
+		"proxy":    func() (string, error) { return "", fmt.Errorf("{{ proxy }} is only available in chaos.proxies env") },
 		"mocksecret": func(name string) (string, error) {
 			m, ok := env.Service.Mocks[name]
 			if !ok {

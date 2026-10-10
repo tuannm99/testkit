@@ -17,6 +17,7 @@ rules (assertions, SLO thresholds) — never by an AI.
 | [docs/tham-chieu-testcase.md](docs/tham-chieu-testcase.md) | Test case reference: fields, `given`, steps, checks, operators, templates, mutations, suites and the gate |
 | [docs/tham-chieu-service.md](docs/tham-chieu-service.md) | Service descriptor reference: image, stores, mocks, triggers, entities, failpoints, env, chaos, reconcile, panels |
 | [docs/tham-chieu-cau-hinh.md](docs/tham-chieu-cau-hinh.md) | Configuration reference: `testkit.yaml` (qc, ai), env files, environment variables, every CLI command |
+| [docs/bo-case-chuan.md](docs/bo-case-chuan.md) | The standard case pack: describe the service's business once (`conformance`), `testkit gen` writes duplicate-delivery, poison-message, crash, dependency-fault, out-of-order and steady-load cases for every trigger |
 | [docs/huong-dan-qc.md](docs/huong-dan-qc.md) | QC: run the release, read the report, hand over results |
 | [AGENTS.md](AGENTS.md) | Rules and workflows for AI agents |
 | [docs/assumptions.md](docs/assumptions.md), [docs/phases/](docs/phases/) | Design decisions and the build log of each phase |

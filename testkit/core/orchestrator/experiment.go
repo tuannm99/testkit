@@ -252,3 +252,35 @@ func (c experimentChecker) Check(_ context.Context, ref kit.CheckRef) (kit.Obser
 	}
 	return kit.Observation{At: now}, fmt.Errorf("unknown experiment check %q", ref.Raw)
 }
+
+// triggerChecker answers the trigger-neutral checks of the execution's trigger,
+// so a scenario written once asserts the queue whatever its technology.
+type triggerChecker struct{ e *execution }
+
+func (c triggerChecker) CheckPrefixes() []string { return []string{"trigger"} }
+
+// Check resolves:
+//
+//	trigger.backlog   jobs not finished: waiting + being processed
+//	trigger.dlq       jobs dead-lettered (destination declared in the descriptor)
+func (c triggerChecker) Check(ctx context.Context, ref kit.CheckRef) (kit.Observation, error) {
+	now := time.Now().UTC()
+	ts, ok := c.e.trigger.(kit.TriggerState)
+	if !ok {
+		return kit.Observation{At: now}, fmt.Errorf("trigger.* checks need an active trigger that reports its state (%s does not)", c.e.ex.Trigger)
+	}
+	if len(ref.Segments) != 2 {
+		return kit.Observation{At: now}, fmt.Errorf("expected trigger.backlog or trigger.dlq")
+	}
+	var n int64
+	var err error
+	switch ref.Segments[1].Name {
+	case "backlog":
+		n, err = ts.Backlog(ctx)
+	case "dlq":
+		n, err = ts.DeadLetters(ctx)
+	default:
+		return kit.Observation{At: now}, fmt.Errorf("unknown trigger check %q (backlog | dlq)", ref.Raw)
+	}
+	return kit.Observation{Value: n, Source: fmt.Sprintf("%s %s", c.e.ex.Trigger, ref.Segments[1].Name), At: time.Now().UTC()}, err
+}

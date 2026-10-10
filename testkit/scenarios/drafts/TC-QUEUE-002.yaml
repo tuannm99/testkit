@@ -1,0 +1,36 @@
+id: TC-QUEUE-002
+title: Message độc trên Redis stream vào DLQ, không chặn job phía sau
+requirement: REQ-234
+risk: P1
+status: draft
+owner: qc-lead
+service: order-worker
+purpose: >
+  Một entry không đọc được trên stream orders-stream phải được chuyển sang orders-stream-dlq kèm lý do và được XACK
+  (không nằm mãi trong pending), và job hợp lệ phía sau vẫn được xử lý.
+preconditions:
+  - Message độc đứng trước job hợp lệ trong cùng stream
+vars:
+  customer: "cust-q2+{{ .ns }}@shop.test"
+input:
+  order: { id: q2, customer_email: "{{ .vars.customer }}", amount_cents: 700, currency: USD, status: pending }
+  poison: "{not json"
+trigger: [redis]
+given:
+  postgres.order: ["{{ .input.order }}"]
+  mock.payment: [201]
+steps:
+  - step: redis.enqueue
+    with: { queue: orders-stream, value: "{{ .input.poison }}" }
+  - step: trigger.enqueue
+    with: { id: q2 }
+expect:
+  - { id: A1, check: redis.queue(orders-stream).dlq, eq: 1, why: "Message độc nằm trong DLQ" }
+  - { id: A2, check: postgres.order.q2.status, eq: paid, why: "Job hợp lệ phía sau không bị chặn" }
+  - { id: A3, check: redis.queue(orders-stream).depth, eq: 0, why: "Không còn gì chờ hoặc đang xử lý (entry độc không bị xử lý lại)" }
+  - { id: A4, check: redis.queue(orders-stream).pending, eq: 0, why: "Entry độc đã được XACK, không kẹt trong pending" }
+evidence:
+  grafana: [jobs_total, side_effects_total]
+within: 30s
+mutations:
+  - { id: M1, failpoint: drop_dead_letters, title: "Message không xử lý được bị bỏ thay vì chuyển DLQ", expect_red: [A1] }

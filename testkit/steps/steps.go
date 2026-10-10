@@ -20,6 +20,8 @@ import (
 	"github.com/tuannm99/testkit/testkit/adapters/sut"
 	"github.com/tuannm99/testkit/testkit/adapters/trigger/dbpoll"
 	"github.com/tuannm99/testkit/testkit/adapters/trigger/kafka"
+	"github.com/tuannm99/testkit/testkit/adapters/trigger/rabbitmq"
+	"github.com/tuannm99/testkit/testkit/adapters/trigger/redisq"
 	"github.com/tuannm99/testkit/testkit/core/kit"
 )
 
@@ -51,6 +53,8 @@ var Defs = []kit.StepDef{
 
 	{Name: "clickhouse.exec", Connector: "clickhouse", Doc: "Execute a statement in the namespace database", Required: []string{"sql"}},
 	{Name: "clickhouse.optimize", Connector: "clickhouse", Doc: "OPTIMIZE TABLE ... FINAL (force merges / ReplacingMergeTree dedupe)", Required: []string{"table"}, Optional: []string{"final"}},
+	{Name: "rabbitmq.publish", Connector: "rabbitmq", Doc: "Publish persistent messages to a queue of the execution's vhost (with broker confirm)", Required: []string{"queue", "body"}, Optional: []string{"count", "message_id", "headers"}},
+	{Name: "redis.enqueue", Connector: "redis", Doc: "Add messages to a declared Redis queue (stream entry {payload,id} or list element)", Required: []string{"queue", "value"}, Optional: []string{"count", "id"}},
 	{Name: "redis.set", Connector: "redis", Doc: "Set a key under the namespace prefix", Required: []string{"key", "value"}, Optional: []string{"ttl"}},
 	{Name: "redis.del", Connector: "redis", Doc: "Delete a key under the namespace prefix", Required: []string{"key"}},
 	{Name: "redis.expire", Connector: "redis", Doc: "Expire a key now or after ttl (e.g. a lock expiring mid-job)", Required: []string{"key"}, Optional: []string{"ttl"}},
@@ -92,6 +96,8 @@ var Defs = []kit.StepDef{
 var Checks = []kit.CheckDef{
 	{Prefix: "postgres", Connector: "postgres", Doc: "Rows of entities in the namespace database",
 		Examples: []string{"postgres.order.o1.status", "postgres.order.o1.exists", "postgres.order.count(status=paid)"}},
+	{Prefix: "rabbitmq", Connector: "rabbitmq", Doc: "Queues of the execution's vhost: depth, in-flight, rates, dead-letter content",
+		Examples: []string{"rabbitmq.jobs.ready", "rabbitmq.jobs.unacked", "rabbitmq.jobs.depth", "rabbitmq.jobs.redelivered", "rabbitmq.jobs.dlq.ready", "rabbitmq.jobs.dlq.messages"}},
 	{Prefix: "kafka", Connector: "kafka", Doc: "Records of namespaced topics and consumer lag",
 		Examples: []string{"kafka.order-events.count", "kafka.topic(orders.dlq).count", "kafka.order-events.count(key=o1)", "kafka.lag(order-worker)"}},
 	{Prefix: "es", Connector: "elasticsearch", Doc: "Documents (after _refresh)",
@@ -102,8 +108,8 @@ var Checks = []kit.CheckDef{
 		Examples: []string{"mail.to(customer).count", "mail.to(customer).subject"}},
 	{Prefix: "clickhouse", Connector: "clickhouse", Doc: "Rows after flushing async inserts; duplicates; active parts",
 		Examples: []string{"clickhouse.order_event.count(order_id=o1)", "clickhouse.order_event.duplicates", "clickhouse.parts(order_events)"}},
-	{Prefix: "redis", Connector: "redis", Doc: "Keys under the namespace prefix",
-		Examples: []string{"redis.key(order:o1:status)", "redis.ttl(lock:o1)", "redis.count(order:*)"}},
+	{Prefix: "redis", Connector: "redis", Doc: "Keys under the namespace prefix; declared queues (streams and lists)",
+		Examples: []string{"redis.key(order:o1:status)", "redis.ttl(lock:o1)", "redis.count(order:*)", "redis.queue(jobs).depth", "redis.queue(jobs).pending", "redis.queue(jobs).dlq"}},
 	{Prefix: "mongo", Connector: "mongo", Doc: "Documents of entities in the namespace database",
 		Examples: []string{"mongo.audit.count(order_id=o1)", "mongo.audit.order.paid:o1.type"}},
 	{Prefix: "socket", Connector: "socket", Doc: "Journal of a WebSocket/TCP partner",
@@ -112,6 +118,8 @@ var Checks = []kit.CheckDef{
 		Examples: []string{"reconcile.paid_orders.mismatches", "reconcile.paid_orders.count(store=elasticsearch)"}},
 	{Prefix: "experiment", Connector: "", Doc: "Chaos experiment and load generator state",
 		Examples: []string{"experiment.recovery_seconds", "experiment.aborted", "experiment.load.sent", "experiment.load.late"}},
+	{Prefix: "trigger", Connector: "", Doc: "State of the execution's trigger, whatever its technology (Kafka, RabbitMQ, Redis, DB table)",
+		Examples: []string{"trigger.backlog", "trigger.dlq"}},
 	{Prefix: "ui", Connector: "ui", Doc: "Playwright UI tests run by ui.run (JSON report)",
 		Examples: []string{"ui.failed", "ui.passed", "ui.tests", "ui.errors", "ui.test(trang đơn hàng hiển thị đúng trạng thái).status"}},
 	{Prefix: "sut", Connector: "sut", Doc: "Service under test containers",
@@ -122,6 +130,7 @@ var Checks = []kit.CheckDef{
 func Register(reg *kit.Registry) {
 	reg.AddConnector("postgres", postgres.New)
 	reg.AddConnector("kafka", kafka.New)
+	reg.AddConnector("rabbitmq", rabbitmq.New)
 	reg.AddConnector("elasticsearch", elasticsearch.New)
 	reg.AddConnector("mock", httpmock.NewConnector)
 	reg.AddConnector("mail", mail.New)
@@ -135,6 +144,8 @@ func Register(reg *kit.Registry) {
 	reg.AddConnector("k6", k6.New)
 	reg.AddConnector("ui", playwright.New)
 	reg.AddConnector("trigger:kafka", kafka.NewTrigger)
+	reg.AddConnector("trigger:rabbitmq", rabbitmq.NewTrigger)
+	reg.AddConnector("trigger:redis", redisq.New)
 	reg.AddConnector("trigger:db-poll", dbpoll.New)
 	for _, d := range Defs {
 		reg.AddStep(d)

@@ -1,0 +1,35 @@
+# Sinh tự động bởi `testkit gen` từ testkit/services/order-worker.yaml (mục conformance, mẫu steady-load).
+# Đừng sửa tay: sửa mô tả service rồi chạy lại `testkit gen`. Case ở trạng thái draft;
+# `testkit admit` kiểm bằng đột biến, người duyệt mới chạy `testkit admit --approve --by <tên>`.
+id: TC-STD-ORDER-WORKER-LOAD-RABBITMQ
+title: Tải ổn định 20 job/s qua rabbitmq — SLO, thông lượng và so với baseline
+requirement: REQ-STD
+risk: P1
+status: draft
+owner: qc-lead
+service: order-worker
+purpose: >-
+  Đo hiệu năng ở tải cố định 20 job/s qua rabbitmq (open model: job tới đúng nhịp bất kể service nhanh hay chậm), sau 5s warm-up, 3 lần lặp để so sánh thống kê với baseline cùng môi trường. Độ trễ đầu-cuối = lúc job hoàn tất − lúc máy tạo tải phát job (perf.completion). Ngưỡng SLO do đội service đặt trong mô tả; baseline do người ghi trên máy rảnh (`testkit baseline record`).
+preconditions:
+  - Máy tạo tải (TestKit runner) không bị nghẽn (đo bằng số job phát trễ)
+  - Chạy một mình trên stack (case hiệu năng không chạy song song)
+  - 'Baseline của khoá std-order-worker-20rps-rabbitmq đã được ghi (nếu chưa: `testkit baseline record <case>`)'
+trigger: [rabbitmq]
+input: {}
+given:
+  mock.payment: [201]
+perf:
+  kind: load
+  executor: trigger
+  warmup: 5s
+  stages: [{rate: 20, duration: 20s}]
+  repeat: 3
+  id_prefix: SL
+  thresholds: {error_rate: 0.01, max_dropped: 0, min_throughput: 15, p95_ms: 1500}
+  baseline: {key: std-order-worker-20rps-rabbitmq, max_regression: 10%}
+expect:
+  - {id: A1, check: trigger.dlq, eq: 0, why: Không job nào bị đẩy vào DLQ dưới tải}
+  - {id: A2, check: reconcile.paid_orders.mismatches, eq: 0, why: Các kho dữ liệu khớp nhau sau thí nghiệm (reconcile.paid_orders)}
+evidence: {grafana: [jobs_total, side_effects_total, payment_calls_total]}
+within: 90s
+generated: {by: testkit gen, sources: [testkit/services/order-worker.yaml#conformance.patterns.steady-load]}

@@ -172,7 +172,7 @@ func Lint(c *Case, services map[string]*config.Service, reg *kit.Registry) []Iss
 			errf(s.Line, "step %s targets proxy %q, not routed for this case (add it to chaos.proxies)", s.Step, kit.Str(s.With, "proxy"))
 		}
 		if (s.Step == "trigger.enqueue" || s.Step == "load.start") && len(c.Trigger) == 0 {
-			errf(s.Line, "trigger.enqueue (given.job) needs `trigger:` (kafka, db-poll)")
+			errf(s.Line, "trigger.enqueue (given.job) needs `trigger:` (kafka, db-poll, rabbitmq, redis)")
 		}
 		if s.Step == "mock.script" {
 			if m := kit.Str(s.With, "mock"); m != "" {
@@ -225,6 +225,15 @@ func Lint(c *Case, services map[string]*config.Service, reg *kit.Registry) []Iss
 				errf(line("mutations"), "mutation %s expects red on unknown assertion %s", m.ID, id)
 			}
 		}
+		for _, t := range m.Triggers {
+			found := false
+			for _, ct := range c.Triggers() {
+				found = found || ct == t
+			}
+			if !found {
+				errf(line("mutations"), "mutation %s is restricted to trigger %q, which the case does not run through (%v)", m.ID, t, c.Triggers())
+			}
+		}
 	}
 
 	// --- templates render with placeholder values ----------------------------------
@@ -254,6 +263,8 @@ func serviceHas(svc *config.Service, connector string) bool {
 		return svc.Stores.Postgres != nil
 	case "kafka":
 		return svc.Stores.Kafka != nil
+	case "rabbitmq":
+		return svc.Stores.RabbitMQ != nil
 	case "elasticsearch":
 		return svc.Stores.Elasticsearch != nil
 	case "clickhouse":
