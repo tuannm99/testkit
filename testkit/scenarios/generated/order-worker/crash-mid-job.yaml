@@ -42,5 +42,5 @@ expect:
 evidence: {grafana: [jobs_total, side_effects_total, payment_calls_total]}
 within: 60s
 mutations:
-  - {id: M1, failpoint: skip_paid_check, title: Bỏ kiểm tra đơn đã paid (giao lại sau crash bị trừ tiền lần hai), expect_red: [A6]}
+  - {id: M1, failpoint: skip_paid_check, title: 'Bỏ kiểm tra đơn đã paid (job giao lại sau crash kẹt, không bao giờ xong)', expect_red: [A10, A4]}
 generated: {by: testkit gen, sources: [testkit/services/order-worker.yaml#conformance.patterns.crash-mid-job]}

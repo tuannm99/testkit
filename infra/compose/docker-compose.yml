@@ -152,8 +152,9 @@ services:
       <<: *hc
       test: ["CMD", "redis-cli", "ping"]
 
-  # One vhost per execution isolates queues; statistics refresh every 500 ms so
-  # `ready`/`unacked` checks and drain detection do not lag by the 5 s default.
+  # One vhost per execution isolates queues. Exact in-flight counts come from
+  # `rabbitmqctl list_queues` in this container; the management API is slower
+  # (4-5 s) and is only a fallback and a source of rates for evidence.
   rabbitmq:
     profiles: [stores]
     image: ${RABBITMQ_IMAGE}

@@ -282,3 +282,52 @@ func assertGone(t *testing.T, e *kit.Env) {
 		}
 	}
 }
+
+// TestRabbitMQHeldMessageIsNotDrained is the regression test of a false "drained":
+// the management API shows a delivered, unacknowledged message only after 4-5 s,
+// so a consumer that holds a job (retrying) must still count as backlog at once.
+func TestRabbitMQHeldMessageIsNotDrained(t *testing.T) {
+	requireStack(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	e := env(t, fmt.Sprintf("tk_contract_held_%d", time.Now().Unix()%100000), "")
+	store := rabbitmq.New()
+	if err := store.Provision(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	defer store.Teardown(context.Background()) //nolint:errcheck
+	tr := rabbitmq.NewTrigger().(kit.TriggerConnector)
+	if err := tr.Provision(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Teardown(context.Background()) //nolint:errcheck
+	if err := tr.Enqueue(ctx, kit.Job{ID: "held"}); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s/%s", e.Runner.RabbitUser, e.Runner.RabbitPass, e.Runner.RabbitAMQP, e.NS))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ch, _ := conn.Channel()
+	msgs, err := ch.Consume("jobs", "", false, false, false, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := <-msgs // delivered and held: unacked = 1
+	ts := tr.(kit.TriggerState)
+	if n, err := ts.Backlog(ctx); err != nil || n != 1 {
+		t.Fatalf("Backlog right after delivery = %d (%v), want 1: a held message is still work in progress", n, err)
+	}
+	short, c2 := context.WithTimeout(ctx, 2500*time.Millisecond)
+	defer c2()
+	if err := tr.Drain(short); err == nil {
+		t.Fatal("Drain returned while a consumer holds an unacknowledged message")
+	}
+	_ = d.Ack(false)
+	dctx, c3 := context.WithTimeout(ctx, 20*time.Second)
+	defer c3()
+	if err := tr.Drain(dctx); err != nil {
+		t.Fatalf("Drain after the ack: %v", err)
+	}
+}

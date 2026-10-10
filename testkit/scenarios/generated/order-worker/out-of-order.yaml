@@ -58,5 +58,5 @@ expect:
 evidence: {grafana: [jobs_total, side_effects_total, payment_calls_total]}
 within: 45s
 mutations:
-  - {id: M1, failpoint: skip_paid_check, title: Bỏ kiểm tra đơn đã paid (job phát lại muộn bị trừ tiền lại), expect_red: [A8]}
+  - {id: M1, failpoint: skip_paid_check, title: 'Bỏ kiểm tra đơn đã paid (job phát lại muộn kẹt, không bao giờ xong)', expect_red: [A16]}
 generated: {by: testkit gen, sources: [testkit/services/order-worker.yaml#conformance.patterns.out-of-order]}

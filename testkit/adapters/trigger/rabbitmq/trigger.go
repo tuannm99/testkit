@@ -34,7 +34,7 @@ func (t *Trigger) Provision(_ context.Context, env *kit.Env) error {
 			t.dlq = q.DLQ
 		}
 	}
-	t.c = newClient(env.Runner, string(env.NS))
+	t.c = newClient(env, string(env.NS))
 	return t.c.dial() // the vhost and queues are created by the rabbitmq connector (provisioned first)
 }
 
@@ -73,12 +73,8 @@ func (t *Trigger) Drain(ctx context.Context) error { return t.c.drain(ctx, t.que
 
 // Backlog is ready + unacked messages of the queue.
 func (t *Trigger) Backlog(ctx context.Context) (int64, error) {
-	ready, _, err := t.c.ready(t.queue)
-	if err != nil {
-		return 0, err
-	}
-	st, err := t.c.stats(ctx, t.queue)
-	return ready + st.Unacked, err
+	ready, unacked, _, err := t.c.counts(ctx, t.queue)
+	return ready + unacked, err
 }
 
 // DeadLetters is the number of messages in the queue's declared DLQ.

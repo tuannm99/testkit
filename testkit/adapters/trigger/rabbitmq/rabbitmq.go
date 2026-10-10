@@ -18,19 +18,28 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/tuannm99/testkit/testkit/core/config"
+	"github.com/tuannm99/testkit/testkit/core/infra"
 	"github.com/tuannm99/testkit/testkit/core/kit"
 )
 
 // statsStable is how long ready and unacked must both read zero before the
-// queue counts as drained: the management API refreshes every 500 ms
-// (compose sets collect_statistics_interval), so this is more than two refreshes.
-const statsStable = 1300 * time.Millisecond
+// queue counts as drained when only the management API is available: it
+// reflects a delivered-but-unacknowledged message up to ~5 s late (measured:
+// a message held by a consumer showed unacked=0 for 4-5 s whatever
+// collect_statistics_interval or the cache multiplier), so a shorter window
+// can report "drained" while a job is still being processed.
+const statsStable = 6 * time.Second
+
+// exactStable is the window for the exact source (rabbitmqctl asks the queue
+// process itself): two consecutive zero readings, no stale data to wait out.
+const exactStable = 400 * time.Millisecond
 
 // Client talks AMQP (publish, exact ready count) and the management API
 // (unacknowledged, rates, dumps) for one vhost.
@@ -41,10 +50,78 @@ type Client struct {
 	conn  *amqp.Connection
 	ch    *amqp.Channel
 	pubMu sync.Mutex // the publish channel is shared by concurrent Enqueue calls (load generators)
+
+	project   string
+	docker    *infra.Docker
+	mu        sync.Mutex
+	container string // broker container id (cached)
 }
 
-func newClient(ep config.Endpoints, vhost string) *Client {
-	return &Client{ep: ep, vhost: vhost, http: &http.Client{Timeout: 15 * time.Second}}
+func newClient(env *kit.Env, vhost string) *Client {
+	c := &Client{ep: env.Runner, vhost: vhost, http: &http.Client{Timeout: 15 * time.Second}}
+	if env.Project != nil {
+		c.project = env.Project.Name
+		c.docker = infra.NewDocker(nil)
+	}
+	return c
+}
+
+// counts returns ready and unacknowledged messages of a queue. The exact source
+// asks the broker (rabbitmqctl in its container) and is immediate; if docker is
+// not usable the management API answers, which may lag by seconds (exact=false).
+func (c *Client) counts(ctx context.Context, queue string) (ready, unacked int64, exact bool, err error) {
+	if r, u, err := c.exactCounts(ctx, queue); err == nil {
+		return r, u, true, nil
+	}
+	ready, _, err = c.ready(queue)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	st, err := c.stats(ctx, queue)
+	return ready, st.Unacked, false, err
+}
+
+// exactCounts runs `rabbitmqctl list_queues` in the broker container: it reads the
+// queue processes directly, so a message delivered a millisecond ago is already unacked.
+func (c *Client) exactCounts(ctx context.Context, queue string) (ready, unacked int64, err error) {
+	if c.docker == nil {
+		return 0, 0, fmt.Errorf("no docker")
+	}
+	c.mu.Lock()
+	id := c.container
+	c.mu.Unlock()
+	if id == "" {
+		out, err := c.docker.Run(ctx, "ps", "-q", "--filter", "label=com.docker.compose.project="+c.project,
+			"--filter", "label=com.docker.compose.service=rabbitmq")
+		id = strings.TrimSpace(strings.SplitN(out, "\n", 2)[0])
+		if err != nil || id == "" {
+			return 0, 0, fmt.Errorf("rabbitmq container not found: %v", err)
+		}
+		c.mu.Lock()
+		c.container = id
+		c.mu.Unlock()
+	}
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, err := c.docker.Run(cctx, "exec", id, "rabbitmqctl", "list_queues", "-p", c.vhost, "-q", "--formatter", "json",
+		"name", "messages_ready", "messages_unacknowledged")
+	if err != nil {
+		return 0, 0, err
+	}
+	var rows []struct {
+		Name    string `json:"name"`
+		Ready   int64  `json:"messages_ready"`
+		Unacked int64  `json:"messages_unacknowledged"`
+	}
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		return 0, 0, fmt.Errorf("rabbitmqctl output: %w", err)
+	}
+	for _, r := range rows {
+		if r.Name == queue {
+			return r.Ready, r.Unacked, nil
+		}
+	}
+	return 0, 0, fmt.Errorf("queue %s not listed", queue)
 }
 
 func (c *Client) amqpURL() string {
@@ -167,21 +244,21 @@ func (c *Client) drain(ctx context.Context, queue string) error {
 	var zeroSince time.Time
 	var last string
 	for {
-		ready, _, err := c.ready(queue)
-		var st QueueStats
-		if err == nil {
-			st, err = c.stats(ctx, queue)
-		}
-		if err == nil && ready == 0 && st.Unacked == 0 {
+		ready, unacked, exact, err := c.counts(ctx, queue)
+		if err == nil && ready == 0 && unacked == 0 {
 			if zeroSince.IsZero() {
 				zeroSince = time.Now()
 			}
-			if time.Since(zeroSince) >= statsStable {
+			window := statsStable
+			if exact {
+				window = exactStable
+			}
+			if time.Since(zeroSince) >= window {
 				return nil
 			}
 		} else {
 			zeroSince = time.Time{}
-			last = fmt.Sprintf("ready %d, unacked %d, err %v", ready, st.Unacked, err)
+			last = fmt.Sprintf("ready %d, unacked %d, err %v", ready, unacked, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -204,7 +281,7 @@ func (r *Connector) CheckPrefixes() []string { return []string{"rabbitmq"} }
 
 func (r *Connector) Provision(ctx context.Context, env *kit.Env) error {
 	r.env = env
-	r.c = newClient(env.Runner, string(env.NS))
+	r.c = newClient(env, string(env.NS))
 	vh := url.PathEscape(r.c.vhost)
 	if err := r.c.mgmt(ctx, http.MethodPut, "/api/vhosts/"+vh, map[string]any{}, nil); err != nil {
 		return fmt.Errorf("create vhost %s: %w", r.c.vhost, err)
@@ -308,19 +385,26 @@ func (r *Connector) Check(ctx context.Context, ref kit.CheckRef) (kit.Observatio
 		}
 		return obs(msgs, msgs)
 	}
+	if prop == "unacked" || prop == "depth" {
+		ready, unacked, exact, err := r.c.counts(ctx, queue)
+		if err != nil {
+			return kit.Observation{Source: src, At: time.Now().UTC()}, err
+		}
+		if !exact {
+			src += " (management API: unacked may lag a few seconds)"
+		}
+		if prop == "unacked" {
+			return obs(unacked, nil)
+		}
+		return obs(ready+unacked, nil)
+	}
+	// published / acked / redelivered are management counters (they lag a few
+	// seconds): evidence, not a gate for "still being processed".
 	st, err := r.c.stats(ctx, queue)
 	if err != nil {
 		return kit.Observation{Source: src, At: time.Now().UTC()}, err
 	}
 	switch prop {
-	case "unacked":
-		return obs(st.Unacked, st)
-	case "depth":
-		ready, _, err := r.c.ready(queue)
-		if err != nil {
-			return kit.Observation{Source: src, At: time.Now().UTC()}, err
-		}
-		return obs(ready+st.Unacked, st)
 	case "published":
 		return obs(st.Stats.Publish, st)
 	case "acked":

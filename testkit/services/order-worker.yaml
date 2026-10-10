@@ -261,7 +261,9 @@ conformance:
     duplicate-delivery:
       copies: 3
       mutations:
-        - { failpoint: skip_paid_check, title: "Bỏ kiểm tra đơn đã paid (giao trùng bị trừ tiền lại)", expect_red: [mock.payment.succeeded] }
+        # Triệu chứng khác nhau theo trigger (Kafka/RabbitMQ/Redis: trừ tiền lại; db-poll: job thứ hai chết vào `dead`),
+        # nên không chỉ định assertion: case phải đỏ ở bất kỳ assertion nào.
+        - { failpoint: skip_paid_check, title: "Bỏ kiểm tra đơn đã paid (giao trùng bị xử lý lại)" }
     poison-message:
       body: "{not json"
       db-poll:
@@ -273,7 +275,8 @@ conformance:
       log: "failpoint: crashing after db commit"
       restart: "on-failure:3"
       mutations:
-        - { failpoint: skip_paid_check, title: "Bỏ kiểm tra đơn đã paid (giao lại sau crash bị trừ tiền lần hai)", expect_red: [mock.payment.succeeded] }
+        # Giao lại sau crash khi đơn đã paid: không có kiểm tra thì job kẹt mãi (không bao giờ xong).
+        - { failpoint: skip_paid_check, title: "Bỏ kiểm tra đơn đã paid (job giao lại sau crash kẹt, không bao giờ xong)", expect_red: [trigger.backlog, es.order] }
     dependency-fault:
       jobs: 100
       rate: 10
@@ -292,7 +295,7 @@ conformance:
     out-of-order:
       jobs: 3
       mutations:
-        - { failpoint: skip_paid_check, title: "Bỏ kiểm tra đơn đã paid (job phát lại muộn bị trừ tiền lại)", expect_red: [mock.payment.succeeded] }
+        - { failpoint: skip_paid_check, title: "Bỏ kiểm tra đơn đã paid (job phát lại muộn kẹt, không bao giờ xong)", expect_red: [trigger.backlog] }
     steady-load:
       rate: 20
       duration: 20s

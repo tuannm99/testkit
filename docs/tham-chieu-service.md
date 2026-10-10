@@ -98,7 +98,9 @@ Mỗi trigger cho biết **hai con số** để case viết một lần dùng ch
 | `redis` | waiting + pending | số phần tử của `dlq` trong khai báo queue | `stores.redis.queues[].dlq` |
 
 Khai báo nhiều trigger thì mỗi case chạy qua từng trigger và kết quả phải giống nhau (so khớp trigger). Drain của mỗi loại
-đều chính xác, không đoán: RabbitMQ `ready = 0` và `unacked = 0` ổn định ≥ 1,3 giây (số liệu quản trị trễ ~0,5 giây);
+đều chính xác, không đoán: RabbitMQ `ready = 0` và `unacked = 0` ở hai lần đọc liên tiếp, đọc **thẳng từ broker** bằng
+`rabbitmqctl list_queues` trong container RabbitMQ (management API chỉ là phương án dự phòng vì nó thấy message đang bị
+giữ chưa ack **chậm 4–5 giây**; khi phải dùng nó thì cần ổn định 6 giây);
 Redis stream không còn entry sau `last-delivered-id` của group và danh sách pending rỗng; Redis list rỗng cả queue lẫn
 `processing`; Kafka lag = 0; db-poll theo câu SQL `drained`.
 
