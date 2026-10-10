@@ -231,14 +231,21 @@ lại và hoàn tất; việc đã làm trước khi chết không lặp.
 ### 6.4 `dependency-fault` — lỗi phụ thuộc dưới tải (P0)
 
 *Kiểm:* thí nghiệm chaos theo quy trình: tải nền cố định `rate` job/s (open model) cho `jobs` job → trạng thái ổn định → gây
-lỗi qua Toxiproxy trong `for` → tự dừng khẩn cấp nếu có job vào DLQ (và nếu `abort_backlog` > 0 mà tồn đọng vượt ngưỡng) → gỡ lỗi
+lỗi qua Toxiproxy trong `for` → (chỉ khi `abort_backlog` > 0 và tồn đọng vượt ngưỡng: dừng khẩn cấp) → gỡ lỗi
 → đo thời gian về trạng thái ổn định (`trigger.backlog ≤ 5`).
 *Cấu hình:* `faults[]` — `proxy` (trong `chaos.proxies`), `fault` (`down`, `latency`, `timeout`, `reset_peer`, `bandwidth`,
 `slicer`), `with` (tham số, vd. `latency: 1500`), `for`, và `mutations` riêng của lỗi đó (một failpoint thường chỉ liên quan một
 lỗi: `outage_is_failure` chỉ có nghĩa khi DB chết). Mỗi phần tử là một case.
 *Assertion:* `done` và `effects` (chỉ loại **tổng**), `dlq = 0`, `backlog = 0`, `recovery` (`experiment.recovery_seconds ≤
-max_recovery`), `abort` (không chạm điều kiện dừng khẩn cấp), `load` (máy tạo tải không nghẽn), `reconcile` (mỗi mục
+max_recovery`), `abort` (chỉ có khi `abort_backlog` > 0: không chạm điều kiện dừng khẩn cấp), `load` (máy tạo tải không nghẽn), `reconcile` (mỗi mục
 `reconcile:` của service có `mismatches = 0`).
+*Quy tắc quan trọng nhất — sự cố phải dài hơn ngân sách thử lại của service.* Service thử mỗi job tối đa N lần với backoff;
+một sự cố ngắn hơn tổng thời gian đó thì job vẫn được cứu và "không vào DLQ" đúng **kể cả khi service sai**: case xanh mà
+không chứng minh gì, và đột biến chỉ bị bắt khi gặp may (đã gặp thật ở `order-worker`: sự cố 5 s với ngân sách ≈ 5 s, cùng một
+đột biến lúc bị bắt lúc không, tuỳ pha thời gian). Đặt `for` > ngân sách thử lại (ở `order-worker`: 5 lần, backoff
+0,5+1+1,5+2 s ≈ 5 s, nên dùng 12 s) và `jobs`/`rate` đủ để tải còn chảy suốt sự cố. Cổng đột biến là cách phát hiện vi phạm quy tắc này.
+*Dừng khẩn cấp (`abort_backlog`):* chỉ dành cho blast radius (tồn đọng vượt ngưỡng). TestKit **không** dừng thí nghiệm khi có job
+vào DLQ: đó chính là thuộc tính đang kiểm (assertion `dlq`); dừng sớm biến lỗi sản phẩm thành kết quả "bị huỷ/môi trường" và che verdict.
 *Chạy một mình:* case chaos không chạy song song với case khác trên cùng stack.
 *Đột biến gợi ý:* DB chết → `outage_is_failure` (`expect_red: [dlq]`); cổng thanh toán reset kết nối → `no_retry`.
 

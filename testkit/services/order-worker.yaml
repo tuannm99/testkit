@@ -278,13 +278,16 @@ conformance:
         # Giao lại sau crash khi đơn đã paid: không có kiểm tra thì job kẹt mãi (không bao giờ xong).
         - { failpoint: skip_paid_check, title: "Bỏ kiểm tra đơn đã paid (job giao lại sau crash kẹt, không bao giờ xong)", expect_red: [trigger.backlog, es.order] }
     dependency-fault:
-      jobs: 100
+      # Sự cố phải DÀI HƠN ngân sách thử lại của service (5 lần, backoff 0,5+1+1,5+2 s ≈ 5 s), nếu không
+      # "không vào DLQ" đúng dù service sai, và đột biến chỉ bị bắt khi may. 12 s > 5 s; 150 job ở 10/s = 15 s
+      # để tải còn chảy trong suốt sự cố.
+      jobs: 150
       rate: 10
       max_recovery: 30s
       faults:
         - proxy: postgres
           fault: down
-          for: 5s
+          for: 12s
           mutations:
             # outage_is_failure đổi cách các consumer hàng đợi (Kafka/RabbitMQ/Redis) tính lần thử khi DB chết.
             # db-poll không có đường mã đó: poller dùng chính DB nên không thể tiêu hao lần thử khi DB chết,
