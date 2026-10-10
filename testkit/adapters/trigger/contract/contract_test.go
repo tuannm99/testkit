@@ -138,7 +138,7 @@ var triggers = []triggerCase{
 			n := 0
 			for n < 4 && ctx.Err() == nil {
 				res, err := cl.XReadGroup(ctx, &goredis.XReadGroupArgs{Group: "svc", Consumer: "c1", Streams: []string{key, ">"},
-					Count: 4, Block: 500 * time.Millisecond}).Result()
+					Count: 4, Block: time.Second}).Result()
 				if err == goredis.Nil {
 					continue
 				}
@@ -163,7 +163,7 @@ var triggers = []triggerCase{
 			key, proc := env.NS.KeyPrefix()+"jobs-list", env.NS.KeyPrefix()+"jobs-list:processing"
 			n := 0
 			for n < 4 && ctx.Err() == nil {
-				body, err := cl.BLMove(ctx, key, proc, "RIGHT", "LEFT", 500*time.Millisecond).Result()
+				body, err := cl.BLMove(ctx, key, proc, "RIGHT", "LEFT", time.Second).Result()
 				if err == goredis.Nil {
 					continue
 				}

@@ -264,11 +264,29 @@ func (r *Connector) Apply(ctx context.Context, s kit.Step) (kit.Result, error) {
 //	rabbitmq.<queue>.acked       messages acknowledged
 //	rabbitmq.<queue>.redelivered messages delivered again (nack, crash, lost connection)
 //	rabbitmq.<queue>.messages    bodies of the messages waiting (peeked; use on dead-letter queues)
+//	rabbitmq.<queue>.dlq.<...>   the same properties of the queue's declared dead-letter queue
 func (r *Connector) Check(ctx context.Context, ref kit.CheckRef) (kit.Observation, error) {
-	if len(ref.Segments) != 3 {
-		return kit.Observation{At: time.Now().UTC()}, fmt.Errorf("expected rabbitmq.<queue>.<ready|unacked|depth|consumers|published|acked|redelivered|messages>")
+	usage := fmt.Errorf("expected rabbitmq.<queue>.<ready|unacked|depth|consumers|published|acked|redelivered|messages> or rabbitmq.<queue>.dlq.<same>")
+	var queue, prop string
+	switch {
+	case len(ref.Segments) == 3:
+		queue, prop = ref.Segments[1].Name, ref.Segments[2].Name
+	case len(ref.Segments) == 4 && ref.Segments[2].Name == "dlq":
+		// The dead-letter queue is named by the declaration of the queue.
+		queue, prop = ref.Segments[1].Name, ref.Segments[3].Name
+		var found bool
+		for _, q := range r.env.Service.Stores.RabbitMQ.Queues {
+			if q.Name == queue && q.DLQ != "" {
+				queue, found = q.DLQ, true
+				break
+			}
+		}
+		if !found {
+			return kit.Observation{At: time.Now().UTC()}, fmt.Errorf("rabbitmq queue %q declares no dlq", queue)
+		}
+	default:
+		return kit.Observation{At: time.Now().UTC()}, usage
 	}
-	queue, prop := ref.Segments[1].Name, ref.Segments[2].Name
 	src := fmt.Sprintf("RabbitMQ %s/%s", r.c.vhost, queue)
 	obs := func(v any, raw any) (kit.Observation, error) {
 		return kit.Observation{Value: v, Raw: raw, Source: src + " " + prop, At: time.Now().UTC()}, nil

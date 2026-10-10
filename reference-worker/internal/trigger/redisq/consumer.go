@@ -54,7 +54,7 @@ func (c *Consumer) runStream(ctx context.Context) error {
 			return err
 		}
 		res, err := c.Client.XReadGroup(ctx, &redis.XReadGroupArgs{Group: c.Group, Consumer: c.Consumer,
-			Streams: []string{c.Queue, ">"}, Count: 10, Block: 500 * time.Millisecond}).Result()
+			Streams: []string{c.Queue, ">"}, Count: 10, Block: time.Second}).Result()
 		if err == redis.Nil || ctx.Err() != nil {
 			continue
 		}
@@ -115,7 +115,7 @@ func (c *Consumer) runList(ctx context.Context) error {
 	}
 	c.Log.Info("redis list consuming", "queue", c.Queue)
 	for ctx.Err() == nil {
-		body, err := c.Client.BLMove(ctx, c.Queue, c.Processing, "RIGHT", "LEFT", 500*time.Millisecond).Result()
+		body, err := c.Client.BLMove(ctx, c.Queue, c.Processing, "RIGHT", "LEFT", time.Second).Result()
 		if err == redis.Nil || ctx.Err() != nil {
 			continue
 		}
