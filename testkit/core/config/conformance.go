@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -100,6 +101,10 @@ type ConformanceMutation struct {
 	Failpoint string   `yaml:"failpoint"`
 	Title     string   `yaml:"title"`
 	ExpectRed []string `yaml:"expect_red"` // assertion groups of the pattern (see docs), e.g. effects, dlq
+	// Triggers restricts the mutation to the triggers whose code path the failpoint changes
+	// (empty: all). Say why in a comment: a trigger without an applicable mutation is reported
+	// as "green only".
+	Triggers []string `yaml:"triggers"`
 }
 
 // Pattern names.
@@ -175,6 +180,7 @@ func (s *Service) validateConformance(add func(string, ...any)) {
 			if m.Title == "" {
 				add("%s.mutations[%d]: title is required", where, i)
 			}
+			checkTriggers(fmt.Sprintf("%s.mutations[%d].triggers", where, i), m.Triggers)
 		}
 		switch name {
 		case PatCrash:
@@ -193,6 +199,7 @@ func (s *Service) validateConformance(add func(string, ...any)) {
 					if _, ok := s.Failpoints[m.Failpoint]; !ok {
 						add("%s.faults[%d].mutations[%d]: failpoint %q is not declared in failpoints", where, i, j, m.Failpoint)
 					}
+					checkTriggers(fmt.Sprintf("%s.faults[%d].mutations[%d].triggers", where, i, j), m.Triggers)
 				}
 				if _, ok := s.Chaos.Proxies[f.Proxy]; !ok {
 					add("%s.faults[%d]: proxy %q is not declared in chaos.proxies", where, i, f.Proxy)

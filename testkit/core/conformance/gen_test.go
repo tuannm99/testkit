@@ -208,3 +208,30 @@ func TestVarsAreExpandedPerJob(t *testing.T) {
 		}
 	}
 }
+
+func TestFaultCaseDoesNotAbortOnDeadLetterAndRestrictsMutations(t *testing.T) {
+	yml := strings.Replace(descriptor, "faults: [ { proxy: postgres, fault: down, for: 3s } ]",
+		"faults: [ { proxy: postgres, fault: down, for: 3s, mutations: [ { failpoint: skip_check, title: only kafka, expect_red: [dlq], triggers: [kafka] } ] } ]", 1)
+	svc := load(t, yml)
+	plan, err := Generate(svc, Options{Patterns: []string{config.PatFault}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(plan.Files[0].Body)
+	if strings.Contains(body, "abort_if") || strings.Contains(body, "experiment.aborted") {
+		t.Errorf("without abort_backlog the experiment must not be aborted by the dead-letter property:\n%s", body)
+	}
+	if !strings.Contains(body, "triggers: [kafka]") {
+		t.Errorf("the mutation must carry its trigger restriction:\n%s", body)
+	}
+	// With a blast radius, the abort condition and its assertion appear.
+	svc = load(t, strings.Replace(yml, "faults: [", "abort_backlog: 50\n      faults: [", 1))
+	plan, err = Generate(svc, Options{Patterns: []string{config.PatFault}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = string(plan.Files[0].Body)
+	if !strings.Contains(body, "check: trigger.backlog, gt: 50") || !strings.Contains(body, "experiment.aborted") {
+		t.Errorf("abort_backlog should add the abort condition and its assertion:\n%s", body)
+	}
+}

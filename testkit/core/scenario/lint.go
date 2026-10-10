@@ -225,6 +225,15 @@ func Lint(c *Case, services map[string]*config.Service, reg *kit.Registry) []Iss
 				errf(line("mutations"), "mutation %s expects red on unknown assertion %s", m.ID, id)
 			}
 		}
+		for _, t := range m.Triggers {
+			found := false
+			for _, ct := range c.Triggers() {
+				found = found || ct == t
+			}
+			if !found {
+				errf(line("mutations"), "mutation %s is restricted to trigger %q, which the case does not run through (%v)", m.ID, t, c.Triggers())
+			}
+		}
 	}
 
 	// --- templates render with placeholder values ----------------------------------

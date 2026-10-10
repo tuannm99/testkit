@@ -90,7 +90,12 @@ func Admit(run *result.Run, cases []*scenario.Case, stability int) []*result.Adm
 				for _, m := range ex.Mutations {
 					got[m.ID] = m
 				}
+				applied := 0
 				for _, m := range c.Mutations {
+					if !m.AppliesTo(ex.Trigger) {
+						continue
+					}
+					applied++
 					r, ok := got[m.ID]
 					label := m.ID + suffixOf(ex.Trigger)
 					switch {
@@ -110,6 +115,9 @@ func Admit(run *result.Run, cases []*scenario.Case, stability int) []*result.Adm
 						details = append(details, fmt.Sprintf("%s killed (red: %v)", label, r.RedIDs))
 						mr.Evidence = append(mr.Evidence, path.Join(r.Dir, "case.json"))
 					}
+				}
+				if applied == 0 {
+					details = append(details, "no mutation applies to"+suffixOf(ex.Trigger)+": green only, no counter-evidence for this trigger")
 				}
 			}
 			mr.Detail = strings.Join(details, "; ")

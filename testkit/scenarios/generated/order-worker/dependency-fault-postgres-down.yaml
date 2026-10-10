@@ -9,7 +9,7 @@ status: draft
 owner: qc-lead
 service: order-worker
 purpose: >-
-  Thí nghiệm chaos theo quy trình: tải nền cố định 10 job/s (open model, 100 job) → trạng thái ổn định → gây lỗi "down" lên phụ thuộc "postgres" (chỉ namespace này, qua Toxiproxy) trong 5s, tự dừng nếu job đầu tiên bị đẩy vào DLQ → gỡ lỗi → đo thời gian về trạng thái ổn định. Một sự cố hạ tầng ngắn không được biến thành mất job, xử lý trùng hay dead-letter.
+  Thí nghiệm chaos theo quy trình: tải nền cố định 10 job/s (open model, 100 job) → trạng thái ổn định → gây lỗi "down" lên phụ thuộc "postgres" (chỉ namespace này, qua Toxiproxy) trong 5s → gỡ lỗi → đo thời gian về trạng thái ổn định. Một sự cố hạ tầng ngắn không được biến thành mất job, xử lý trùng hay dead-letter.
 preconditions:
   - 100 job; dữ liệu nghiệp vụ tạo bằng perf.fixture của service
   - Service kết nối tới postgres qua proxy Toxiproxy riêng của execution (chaos.proxies)
@@ -31,7 +31,7 @@ steps:
   - step: chaos.down
     with: {proxy: postgres}
   - step: chaos.hold
-    with: {for: 5s, abort_if: [{check: trigger.dlq, gt: 0, why: dừng ngay khi job đầu tiên bị đẩy vào DLQ}]}
+    with: {for: 5s}
   - step: chaos.clear
   - step: chaos.recover
     with: {within: 60s, expect: [{check: trigger.backlog, lte: 5, why: tồn đọng về lại mức ổn định}]}
@@ -44,11 +44,10 @@ expect:
   - {id: A4, check: trigger.dlq, eq: 0, why: Sự cố hạ tầng tạm thời không đẩy job vào DLQ}
   - {id: A5, check: trigger.backlog, eq: 0, why: Không còn job nào chờ hoặc đang xử lý}
   - {id: A6, check: experiment.recovery_seconds, lte: 30, why: Phục hồi trong thời gian cho phép}
-  - {id: A7, check: experiment.aborted, eq: false, why: Lỗi nằm trong giới hạn cho phép (không chạm điều kiện dừng khẩn cấp)}
-  - {id: A8, check: experiment.load.late, eq: 0, why: Máy tạo tải không bị nghẽn (mọi job được phát đúng nhịp)}
-  - {id: A9, check: reconcile.paid_orders.mismatches, eq: 0, why: Các kho dữ liệu khớp nhau sau thí nghiệm (reconcile.paid_orders)}
+  - {id: A7, check: experiment.load.late, eq: 0, why: Máy tạo tải không bị nghẽn (mọi job được phát đúng nhịp)}
+  - {id: A8, check: reconcile.paid_orders.mismatches, eq: 0, why: Các kho dữ liệu khớp nhau sau thí nghiệm (reconcile.paid_orders)}
 evidence: {grafana: [jobs_total, side_effects_total, payment_calls_total]}
 within: 165s
 mutations:
-  - {id: M1, failpoint: outage_is_failure, title: Sự cố DB bị tính là lần xử lý thất bại (job có thể vào DLQ), expect_red: [A4]}
+  - {id: M1, failpoint: outage_is_failure, title: Sự cố DB bị tính là lần xử lý thất bại (job có thể vào DLQ), expect_red: [A4], triggers: [kafka, rabbitmq, redis]}
 generated: {by: testkit gen, sources: [testkit/services/order-worker.yaml#conformance.patterns.dependency-fault]}

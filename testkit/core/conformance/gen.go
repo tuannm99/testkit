@@ -528,6 +528,9 @@ func (b *builder) build() error {
 		if len(red) > 0 {
 			kv = append(kv, "expect_red", strs(red...))
 		}
+		if len(m.Triggers) > 0 {
+			kv = append(kv, "triggers", strs(m.Triggers...))
+		}
 		muts = append(muts, flow(mapping(kv...)))
 	}
 	pre := make([]*yaml.Node, len(b.pre))
@@ -773,7 +776,7 @@ func (g *gen) fault(p *config.ConformancePattern) error {
 		b.title = fmt.Sprintf("Sự cố %s của %s trong %s dưới tải %d job/s — không mất job, không vào DLQ, phục hồi ≤ %s", f.Fault, f.Proxy, hold, rate, maxRec)
 		b.risk = "P0"
 		b.purpose = fmt.Sprintf("Thí nghiệm chaos theo quy trình: tải nền cố định %d job/s (open model, %d job) → trạng thái ổn định → gây lỗi %q lên phụ thuộc %q "+
-			"(chỉ namespace này, qua Toxiproxy) trong %s, tự dừng nếu job đầu tiên bị đẩy vào DLQ → gỡ lỗi → đo thời gian về trạng thái ổn định. "+
+			"(chỉ namespace này, qua Toxiproxy) trong %s → gỡ lỗi → đo thời gian về trạng thái ổn định. "+
 			"Một sự cố hạ tầng ngắn không được biến thành mất job, xử lý trùng hay dead-letter.", rate, jobs, f.Fault, f.Proxy, hold)
 		b.pre = []string{fmt.Sprintf("%d job; dữ liệu nghiệp vụ tạo bằng perf.fixture của service", jobs),
 			"Service kết nối tới " + f.Proxy + " qua proxy Toxiproxy riêng của execution (chaos.proxies)",
@@ -800,11 +803,15 @@ func (g *gen) fault(p *config.ConformancePattern) error {
 			with.Content = append(with.Content, str(k), val(f.With[k]))
 		}
 		b.addStep("chaos."+f.Fault, with, "")
-		abort := []*yaml.Node{flow(mapping("check", "trigger.dlq", "gt", 0, "why", "dừng ngay khi job đầu tiên bị đẩy vào DLQ"))}
+		// Only a blast-radius condition stops the experiment. A dead-lettered job is the property
+		// under test (assertion `dlq`): stopping on it would turn a product failure into an
+		// aborted, "environment" result and hide the verdict.
+		holdWith := mapping("for", hold)
 		if p.AbortBacklog > 0 {
-			abort = append(abort, flow(mapping("check", "trigger.backlog", "gt", p.AbortBacklog, "why", fmt.Sprintf("blast radius: dừng nếu tồn đọng vượt %d job", p.AbortBacklog))))
+			holdWith.Content = append(holdWith.Content, str("abort_if"), seq(flow(mapping("check", "trigger.backlog", "gt", p.AbortBacklog,
+				"why", fmt.Sprintf("blast radius: dừng nếu tồn đọng vượt %d job", p.AbortBacklog)))))
 		}
-		b.addStep("chaos.hold", mapping("for", hold, "abort_if", seq(abort...)), "")
+		b.addStep("chaos.hold", holdWith, "")
 		b.addStep("chaos.clear", nil, "")
 		b.addStep("chaos.recover", mapping("within", "60s", "expect", seq(flow(mapping("check", "trigger.backlog", "lte", 5, "why", "tồn đọng về lại mức ổn định")))), "")
 		b.addStep("load.wait", mapping("timeout", "120s"), "")
@@ -814,7 +821,9 @@ func (g *gen) fault(p *config.ConformancePattern) error {
 		b.addCheck("dlq", "trigger.dlq", "eq", 0, "Sự cố hạ tầng tạm thời không đẩy job vào DLQ")
 		b.addCheck("backlog", "trigger.backlog", "eq", 0, "Không còn job nào chờ hoặc đang xử lý")
 		b.addCheck("recovery", "experiment.recovery_seconds", "lte", durSeconds(maxRec), "Phục hồi trong thời gian cho phép")
-		b.addCheck("abort", "experiment.aborted", "eq", false, "Lỗi nằm trong giới hạn cho phép (không chạm điều kiện dừng khẩn cấp)")
+		if p.AbortBacklog > 0 {
+			b.addCheck("abort", "experiment.aborted", "eq", false, "Lỗi nằm trong giới hạn cho phép (không chạm điều kiện dừng khẩn cấp)")
+		}
 		b.addCheck("load", "experiment.load.late", "eq", 0, "Máy tạo tải không bị nghẽn (mọi job được phát đúng nhịp)")
 		b.reconcile()
 		b.within = fmt.Sprintf("%ds", jobs/rate+durSeconds(hold)+150)

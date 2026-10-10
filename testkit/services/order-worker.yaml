@@ -286,7 +286,10 @@ conformance:
           fault: down
           for: 5s
           mutations:
-            - { failpoint: outage_is_failure, title: "Sự cố DB bị tính là lần xử lý thất bại (job có thể vào DLQ)", expect_red: [dlq] }
+            # outage_is_failure đổi cách các consumer hàng đợi (Kafka/RabbitMQ/Redis) tính lần thử khi DB chết.
+            # db-poll không có đường mã đó: poller dùng chính DB nên không thể tiêu hao lần thử khi DB chết,
+            # vì vậy đột biến chỉ áp dụng cho ba trigger kia (db-poll được báo "green only").
+            - { failpoint: outage_is_failure, title: "Sự cố DB bị tính là lần xử lý thất bại (job có thể vào DLQ)", expect_red: [dlq], triggers: [kafka, rabbitmq, redis] }
         - proxy: payment
           fault: reset_peer
           for: 5s

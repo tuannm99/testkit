@@ -106,7 +106,9 @@ func (r *Runner) Run(ctx context.Context, cases []*scenario.Case, opt Options) (
 			jobs = append(jobs, job{c: c, trigger: t})
 			if opt.Mutations {
 				for i := range c.Mutations {
-					jobs = append(jobs, job{c: c, trigger: t, mutation: &c.Mutations[i]})
+					if c.Mutations[i].AppliesTo(t) {
+						jobs = append(jobs, job{c: c, trigger: t, mutation: &c.Mutations[i]})
+					}
 				}
 			}
 		}
@@ -257,7 +259,7 @@ func parity(execs []*result.Execution) []result.Parity {
 				switch {
 				case !ok:
 					p.Diffs = append(p.Diffs, fmt.Sprintf("%s: missing in %s", a.ID, ex.Trigger))
-				case a.Result != b.Result || assert.Show(a.Actual) != assert.Show(b.Actual):
+				case a.Result != b.Result || (!timingDependent(a.Check) && assert.Show(a.Actual) != assert.Show(b.Actual)):
 					p.Diffs = append(p.Diffs, fmt.Sprintf("%s: %s=%s (%s), %s=%s (%s)", a.ID, ref.Trigger, assert.Show(a.Actual), a.Result,
 						ex.Trigger, assert.Show(b.Actual), b.Result))
 				}
@@ -268,6 +270,11 @@ func parity(execs []*result.Execution) []result.Parity {
 	}
 	return out
 }
+
+// timingDependent reports checks whose observed value legitimately differs
+// between runs (recovery time, load generator timing): parity compares their
+// verdict, not the number.
+func timingDependent(check string) bool { return strings.HasPrefix(check, "experiment.") }
 
 // namespace is short, unique per execution and valid in every store.
 func (r *Runner) namespace(runID string) kit.Namespace {
