@@ -25,5 +25,6 @@ const (
 	SkipCacheInvalidate = "skip_cache_invalidate" // keep the cached status when a refund arrives
 	WSNoResend          = "ws_no_resend"          // do not resend unacked notifications after reconnect
 	WSNoHeartbeat       = "ws_no_heartbeat"       // never detect a silent (half-open) connection
+	DropDeadLetters     = "drop_dead_letters"     // a message that cannot be processed is dropped instead of dead-lettered
 	OutageIsFailure     = "outage_is_failure"     // a store outage counts as a failed attempt (may dead-letter)
 )

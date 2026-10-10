@@ -151,7 +151,7 @@ func (c *Consumer) observeE2E(m message) {
 func (c *Consumer) deadLetter(ctx context.Context, r *kgo.Record, cause error, attempts int) error {
 	c.Metrics.DLQ.Inc()
 	c.Log.Error("dead-lettering record", "partition", r.Partition, "offset", r.Offset, "err", cause.Error())
-	if c.DLQTopic == "" {
+	if c.DLQTopic == "" || failpoint.Enabled(failpoint.DropDeadLetters) {
 		return nil
 	}
 	dlq := &kgo.Record{Topic: c.DLQTopic, Key: r.Key, Value: r.Value, Headers: append(r.Headers,

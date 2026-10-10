@@ -31,8 +31,11 @@ import (
 	"github.com/tuannm99/testkit/reference-worker/internal/failpoint"
 	"github.com/tuannm99/testkit/reference-worker/internal/httpserver"
 	"github.com/tuannm99/testkit/reference-worker/internal/metrics"
+	"github.com/tuannm99/testkit/reference-worker/internal/trigger"
 	"github.com/tuannm99/testkit/reference-worker/internal/trigger/dbpoll"
 	kafkatrigger "github.com/tuannm99/testkit/reference-worker/internal/trigger/kafka"
+	rabbittrigger "github.com/tuannm99/testkit/reference-worker/internal/trigger/rabbitmq"
+	redistrigger "github.com/tuannm99/testkit/reference-worker/internal/trigger/redisq"
 	"github.com/tuannm99/testkit/reference-worker/internal/usecase"
 )
 
@@ -189,6 +192,25 @@ func runTriggers(lc fx.Lifecycle, sd fx.Shutdowner, c config.Config, pool *pgxpo
 					defer cl.Close() // leaves the group; uncommitted records are redelivered
 					cons := &kafkatrigger.Consumer{Client: cl, DLQTopic: c.KafkaDLQTopic, MaxAttempts: c.KafkaMaxAttempts,
 						Process: proc.Process, Clock: clk, Metrics: m, Log: l.With("trigger", "kafka")}
+					return cons.Run(ctx)
+				})
+			}
+			if c.Has("rabbitmq") {
+				cons := &rabbittrigger.Consumer{URL: c.RabbitURL, Queue: c.RabbitQueue, Prefetch: c.RabbitPrefetch,
+					Handler: &trigger.Handler{Source: "rabbitmq", Process: proc.Process, MaxAttempts: c.RabbitAttempts,
+						Clock: clk, Metrics: m, Log: l.With("trigger", "rabbitmq")},
+					Log: l.With("trigger", "rabbitmq")}
+				start("rabbitmq", cons.Run)
+			}
+			if c.Has("redis") {
+				start("redis", func(ctx context.Context) error {
+					cl := redis.NewClient(&redis.Options{Addr: c.RedisAddr})
+					defer cl.Close()
+					cons := &redistrigger.Consumer{Client: cl, Kind: c.RedisQueueKind, Queue: c.RedisQueue, Group: c.RedisGroup,
+						Consumer: c.WorkerID, Processing: c.RedisProcessing, DLQ: c.RedisDLQ, ClaimIdle: c.RedisClaimIdle,
+						Handler: &trigger.Handler{Source: "redis", Process: proc.Process, MaxAttempts: c.RedisMaxAttempts,
+							Clock: clk, Metrics: m, Log: l.With("trigger", "redis")},
+						Log: l.With("trigger", "redis")}
 					return cons.Run(ctx)
 				})
 			}
